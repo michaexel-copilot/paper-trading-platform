@@ -9,7 +9,7 @@ User=@USER@
 WorkingDirectory=@CHECKOUT@/backend
 Environment=HOST=@HOST@ PORT=@PORT@
 EnvironmentFile=-@CHECKOUT@/backend/.env
-ExecStart=@UV@ run uvicorn app.main:app --host ${HOST} --port ${PORT}
+ExecStart=@CHECKOUT@/backend/.venv/bin/uvicorn app.main:app --host ${HOST} --port ${PORT}
 Restart=on-failure
 RestartSec=5
 

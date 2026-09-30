@@ -110,13 +110,11 @@ log "building frontend"
 
 HOST="${HOST:-$DEFAULT_HOST}"
 PORT="${PORT:-$DEFAULT_PORT}"
-UV_BIN="$(command -v uv)"
 
 log "installing systemd unit $UNIT_TARGET (user=$USER, host=$HOST, port=$PORT)"
 rendered="$(mktemp)"
 sed -e "s|@USER@|$USER|g" \
     -e "s|@CHECKOUT@|$CHECKOUT_DIR|g" \
-    -e "s|@UV@|$UV_BIN|g" \
     -e "s|@HOST@|$HOST|g" \
     -e "s|@PORT@|$PORT|g" \
     "$CHECKOUT_DIR/deploy/paper-trading.service" > "$rendered"
