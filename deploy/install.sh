@@ -133,10 +133,19 @@ else
   sudo systemctl enable --now "$SERVICE_NAME"
 fi
 
-log "waiting for the service to answer on port $PORT"
+# The effective port may come from backend/.env (it overrides the unit's
+# Environment= defaults), so resolve it the same way start.sh does.
+health_port="$PORT"
+env_file="$CHECKOUT_DIR/backend/.env"
+if [ -f "$env_file" ]; then
+  env_port="$(grep -E '^[[:space:]]*PORT[[:space:]]*=' "$env_file" | tail -n1 | cut -d= -f2- | tr -d " \t\r\"'" || true)"
+  [ -n "$env_port" ] && health_port="$env_port"
+fi
+
+log "waiting for the service to answer on port $health_port"
 healthy=0
 for _ in $(seq 1 90); do
-  if curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:$health_port/api/health" >/dev/null 2>&1; then
     healthy=1
     break
   fi
@@ -147,8 +156,8 @@ if [ "$healthy" -ne 1 ]; then
   die "$SERVICE_NAME did not become healthy; see the log lines above"
 fi
 
-log "done — $SERVICE_NAME is running on $HOST:$PORT"
-echo "    UI:      http://$HOST:$PORT"
+log "done — $SERVICE_NAME is running on $HOST:$health_port"
+echo "    UI:      http://$HOST:$health_port"
 echo "    status:  systemctl status $SERVICE_NAME"
 echo "    logs:    journalctl -u $SERVICE_NAME -f"
 echo "    start:   $CHECKOUT_DIR/deploy/start.sh"
