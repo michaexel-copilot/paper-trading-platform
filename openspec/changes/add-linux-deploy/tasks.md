@@ -2,7 +2,7 @@
 
 ## 1. systemd unit
 
-- [ ] 1.1 Create `deploy/paper-trading.service` with placeholders for checkout path and service user: `WorkingDirectory=<checkout>/backend`, `ExecStart=<checkout>/backend/.venv/bin/uvicorn app.main:app --host ${HOST} --port ${PORT}` (direct venv binary, not `uv run` — the wrapper dies by SIGTERM on stop and leaves the unit "failed"), optional `EnvironmentFile=<checkout>/backend/.env`, `Restart=on-failure`, `After=network-online.target`, `WantedBy=multi-user.target` — verify the file parses with `systemd-analyze verify` on a Linux host (no errors after rendering placeholders)
+- [ ] 1.1 Create `deploy/paper-trading.service` with placeholders for checkout path and service user: `WorkingDirectory=<checkout>/backend`, `ExecStart=<checkout>/backend/.venv/bin/uvicorn app.main:app --host ${HOST} --port ${PORT}` (direct venv binary, not `uv run` — the wrapper dies by SIGTERM on stop and leaves the unit "failed"), optional `EnvironmentFile=<checkout>/backend/.env`, `Restart=always` (uvicorn exits 0 on SIGTERM, so `on-failure` would not restart a pkilled process), `After=network-online.target`, `WantedBy=multi-user.target` — verify the file parses with `systemd-analyze verify` on a Linux host (no errors after rendering placeholders)
 
 ## 2. Install script
 

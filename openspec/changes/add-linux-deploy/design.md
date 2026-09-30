@@ -50,7 +50,7 @@ Unit shape (key directives):
 
 - `WorkingDirectory=<checkout>/backend`, `ExecStart=<checkout>/backend/.venv/bin/uvicorn app.main:app --host ${HOST} --port ${PORT}` — the venv's uvicorn directly, not via `uv run`: the `uv` wrapper dies by SIGTERM on `systemctl stop` (status 143) even though the app shuts down cleanly, leaving the unit in a permanent "failed" state; the direct binary is the main PID and exits 0. The venv is guaranteed by the installer's `uv sync`.
 - `EnvironmentFile=<checkout>/backend/.env` (optional) — reuses the existing settings mechanism, so operator configuration survives updates because the installer never touches `backend/.env` or `backend/data/`.
-- `Restart=on-failure`, `After=network-online.target`, `WantedBy=multi-user.target`.
+- `Restart=always`, `RestartSec=5`, `After=network-online.target`, `WantedBy=multi-user.target` — `always`, not `on-failure`: uvicorn exits 0 on SIGTERM, so a `pkill` looks like a clean stop and `on-failure` would not restart it; the spec's crash-restart scenario covers any unexpected death. An explicit `systemctl stop` still stays stopped with either setting.
 - Defaults: `HOST=0.0.0.0`, `PORT=8000` (headless machine must be reachable from other hosts; overridable via the env file).
 
 The checked-in unit uses placeholders; `install.sh` renders them (checkout path, user, uv path) with `sed` into `/etc/systemd/system/paper-trading.service` — no new templating dependency.
