@@ -1,0 +1,41 @@
+# systemd unit for the paper trading platform.
+# deploy/install.sh fills in the checkout path and installs the result as
+# /etc/systemd/system/paper-trading.service.
+
+[Unit]
+Description=Paper Trading Platform
+Documentation=https://github.com/michaexel-copilot/paper-trading-platform/blob/main/docs/deployment.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=papertrading
+Group=papertrading
+WorkingDirectory=@REPO@/backend
+EnvironmentFile=/etc/paper-trading/paper-trading.env
+# yfinance keeps a small cache in the user cache directory; the service user has no home.
+Environment=XDG_CACHE_HOME=/var/cache/paper-trading
+ExecStart=@REPO@/deploy/start.sh --foreground
+
+# A crash is restarted; "systemctl stop" and a clean exit stay stopped.
+Restart=on-failure
+RestartSec=5
+
+# SIGTERM lets the backend stop the order matcher and release the database and lock.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# /var/lib/paper-trading and /var/cache/paper-trading, created and owned by the
+# service user. With ProtectSystem=strict they are the only paths it can write.
+StateDirectory=paper-trading
+StateDirectoryMode=0750
+CacheDirectory=paper-trading
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
