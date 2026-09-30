@@ -1,0 +1,37 @@
+[
+ {
+  "symbol": "AAPL",
+  "shortname": "Apple Inc.",
+  "longname": "Apple Inc.",
+  "quoteType": "EQUITY",
+  "exchange": "NMS"
+ },
+ {
+  "symbol": "SAAPL=F",
+  "shortname": "Apple Inc Stock Futures,Dec-202",
+  "longname": "Apple Inc Single Stock futures",
+  "quoteType": "FUTURE",
+  "exchange": "CME"
+ },
+ {
+  "symbol": "XAAPL=F",
+  "shortname": "Micro Apple Inc Stock Futures,D",
+  "longname": null,
+  "quoteType": "FUTURE",
+  "exchange": "CME"
+ },
+ {
+  "symbol": "APLE",
+  "shortname": "Apple Hospitality REIT, Inc.",
+  "longname": "Apple Hospitality REIT, Inc.",
+  "quoteType": "EQUITY",
+  "exchange": "NYQ"
+ },
+ {
+  "symbol": "AAPL.TO",
+  "shortname": "APPLE CDR (CAD HEDGED)",
+  "longname": "Apple Inc.",
+  "quoteType": "EQUITY",
+  "exchange": "TOR"
+ }
+]

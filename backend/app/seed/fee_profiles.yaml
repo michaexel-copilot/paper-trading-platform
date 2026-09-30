@@ -1,0 +1,99 @@
+# Built-in fee profiles.
+#
+# Rates are fractions (0.001 = 0.10 %). `checked_on` is the date each schedule
+# was last compared with its source. The seeder updates existing profiles from
+# this file, so correcting a rate here and restarting is enough. Fills that have
+# already happened keep the fee they were charged.
+profiles:
+  - key: exchange-spot
+    name: Exchange spot, base tier
+    venue: The exchange that prices the asset (OKX by default)
+    asset_classes: [crypto]
+    default_for: [crypto]
+    # Used when the pricing source has no schedule below, for example Yahoo.
+    maker_rate: "0.0008"
+    taker_rate: "0.0010"
+    exchange_rates:
+      okx:
+        maker: "0.0008"
+        taker: "0.0010"
+        source_url: https://www.okx.com/fees
+        note: Regular user, spot.
+      kraken:
+        maker: "0.0040"
+        taker: "0.0080"
+        source_url: https://www.kraken.com/features/fee-schedule
+        note: Kraken Pro entry tier under the schedule of 9 July 2026.
+      coinbase:
+        maker: "0.0025"
+        taker: "0.0050"
+        source_url: https://www.investing.com/news/cryptocurrency-news/coinbase-cuts-trading-fees-for-active-users-on-advanced-platform-432SI-4904040
+        note: Coinbase Advanced entry tier for EU and UK accounts from 16 September 2026.
+    source_url: https://www.okx.com/fees
+    source_note: >-
+      Each fill is charged the base-tier rates of the exchange that priced it.
+      ccxt also reports per-market rates, but those are library defaults that lag
+      the exchanges' schedules, so they are not used.
+    checked_on: 2026-09-30
+
+  - key: ibkr-fixed-us
+    name: Interactive Brokers Fixed (US)
+    venue: Interactive Brokers
+    asset_classes: [stocks, etfs]
+    default_for: [stocks, etfs]
+    currency: USD
+    per_unit: "0.005"
+    min_fee: "1.00"
+    max_fee_rate: "0.01"
+    assumed_spread: "0.0002"
+    source_url: https://www.interactivebrokers.com/en/pricing/commissions-stocks.php
+    source_note: >-
+      USD 0.005 per share, minimum USD 1.00, maximum 1 % of trade value. The
+      assumed spread is an estimate for liquid US shares.
+    checked_on: 2026-09-30
+
+  - key: flat-fee
+    name: Flat fee per order
+    venue: Flat-fee neobroker (Trade Republic style)
+    asset_classes: [stocks, etfs]
+    currency: EUR
+    fixed: "1.00"
+    assumed_spread: "0.0002"
+    source_url: https://www.handelsblatt.com/vergleich/trade-republic-kosten/
+    source_note: EUR 1.00 third-party cost per order. The assumed spread is an estimate.
+    checked_on: 2026-09-30
+
+  - key: ibkr-fx
+    name: Interactive Brokers FX
+    venue: Interactive Brokers
+    asset_classes: [forex]
+    default_for: [forex]
+    currency: USD
+    maker_rate: "0.00002"
+    taker_rate: "0.00002"
+    min_fee: "2.00"
+    assumed_spread: "0.0001"
+    source_url: https://www.interactivebrokers.com/en/pricing/commissions-spot-currencies.php
+    source_note: >-
+      0.20 basis points of trade value, minimum USD 2.00 per order. The assumed
+      spread is an estimate for major pairs.
+    checked_on: 2026-09-30
+
+  - key: spread-only
+    name: Spread only
+    venue: CFD-style broker
+    asset_classes: [commodities, forex]
+    default_for: [commodities]
+    assumed_spread: "0.0005"
+    source_note: >-
+      An approximation, not a published schedule: no retail venue sells
+      unleveraged, fractional exposure to a futures price. No commission; the
+      cost is the spread, which is how CFD brokers charge for the closest product.
+    checked_on: 2026-09-30
+
+  - key: zero
+    name: Zero commission
+    venue: None
+    asset_classes: [crypto, stocks, etfs, commodities, forex]
+    source_note: No commission and no assumed spread. Useful as a cost-free baseline.
+    checked_on: 2026-09-30

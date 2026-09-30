@@ -1,0 +1,82 @@
+{
+ "AAPL": {
+  "regularMarketPrice": 329.4,
+  "bid": 339.74,
+  "ask": 332.5,
+  "regularMarketTime": 1790712000,
+  "quoteType": "EQUITY",
+  "exchange": "NMS",
+  "currency": "USD",
+  "shortName": "Apple Inc.",
+  "longName": "Apple Inc."
+ },
+ "SPY": {
+  "regularMarketPrice": 764.2,
+  "bid": 0.0,
+  "ask": 0.0,
+  "regularMarketTime": 1790712000,
+  "quoteType": "ETF",
+  "exchange": "PCX",
+  "currency": "USD",
+  "shortName": "State Street SPDR S&P 500 ETF T",
+  "longName": "State Street SPDR S&P 500 ETF Trust"
+ },
+ "GC=F": {
+  "regularMarketPrice": 4231.9,
+  "bid": 4232.3,
+  "ask": 4232.5,
+  "regularMarketTime": 1790757703,
+  "quoteType": "FUTURE",
+  "exchange": "CMX",
+  "currency": "USD",
+  "shortName": "Gold Dec 26",
+  "longName": null
+ },
+ "EURUSD=X": {
+  "regularMarketPrice": 1.1358473,
+  "bid": 1.1401209,
+  "ask": 1.1394713,
+  "regularMarketTime": 1790758256,
+  "quoteType": "CURRENCY",
+  "exchange": "CCY",
+  "currency": "USD",
+  "shortName": "EUR/USD",
+  "longName": "EUR/USD"
+ },
+ "BTC-USD": {
+  "regularMarketPrice": 83002.99,
+  "bid": null,
+  "ask": null,
+  "regularMarketTime": 1790758301,
+  "quoteType": "CRYPTOCURRENCY",
+  "exchange": "CCC",
+  "currency": "USD",
+  "shortName": "Bitcoin USD",
+  "longName": "Bitcoin USD"
+ },
+ "VFIAX": {
+  "regularMarketPrice": 707.76,
+  "bid": null,
+  "ask": null,
+  "regularMarketTime": 1790726917,
+  "quoteType": "MUTUALFUND",
+  "exchange": "NAS",
+  "currency": "USD",
+  "shortName": "Vanguard 500 Index Fd Admiral S",
+  "longName": "Vanguard 500 Index Admiral"
+ },
+ "AAPL261218C00300000": {
+  "regularMarketPrice": 37.5,
+  "bid": 0.0,
+  "ask": 0.0,
+  "regularMarketTime": 1790711995,
+  "quoteType": "OPTION",
+  "exchange": "OPR",
+  "currency": "USD",
+  "shortName": "AAPL Dec 2026 300.000 call",
+  "longName": "AAPL Dec 2026 300.000 call"
+ },
+ "ZZZZNOPE": {
+  "trailingPegRatio": null
+ }
+}

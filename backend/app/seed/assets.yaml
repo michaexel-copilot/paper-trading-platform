@@ -1,0 +1,143 @@
+# Seeded catalog: ten assets per asset class.
+#
+# Rankings were checked on the date below against the listings named per class.
+# The seeder is idempotent and keyed on `symbol`; editing this file and
+# restarting adds new assets and never removes existing ones.
+checked_on: 2026-09-30
+
+classes:
+  crypto:
+    basis: >-
+      Market capitalisation on CoinGecko (api.coingecko.com/api/v3/coins/markets).
+      Left out: the stablecoins USDT, USDC and USDS, and Figure Heloc (FIGR_HELOC),
+      a tokenised loan pool with no market on any configured source.
+    defaults:
+      quote_currency: USDT
+      quantity_step: "0.00000001"
+      calendar: "24/7"
+    assets:
+      - symbol: BTC
+        name: Bitcoin
+        symbols: {okx: BTC/USDT, kraken: BTC/USD, coinbase: BTC/USD, yahoo: BTC-USD}
+      - symbol: ETH
+        name: Ethereum
+        symbols: {okx: ETH/USDT, kraken: ETH/USD, coinbase: ETH/USD, yahoo: ETH-USD}
+      - symbol: BNB
+        name: BNB
+        symbols: {okx: BNB/USDT, kraken: BNB/USD, coinbase: BNB/USD, yahoo: BNB-USD}
+      - symbol: XRP
+        name: XRP
+        symbols: {okx: XRP/USDT, kraken: XRP/USD, coinbase: XRP/USD, yahoo: XRP-USD}
+      - symbol: SOL
+        name: Solana
+        symbols: {okx: SOL/USDT, kraken: SOL/USD, coinbase: SOL/USD, yahoo: SOL-USD}
+      - symbol: TRX
+        name: TRON
+        symbols: {okx: TRX/USDT, kraken: TRX/USD, yahoo: TRX-USD}
+      - symbol: ZEC
+        name: Zcash
+        symbols: {okx: ZEC/USDT, kraken: ZEC/USD, coinbase: ZEC/USD, yahoo: ZEC-USD}
+      - symbol: HYPE
+        name: Hyperliquid
+        symbols: {okx: HYPE/USDT, kraken: HYPE/USD, coinbase: HYPE/USD, yahoo: HYPE32196-USD}
+      - symbol: DOGE
+        name: Dogecoin
+        symbols: {okx: DOGE/USDT, kraken: DOGE/USD, coinbase: DOGE/USD, yahoo: DOGE-USD}
+      - symbol: LINK
+        name: Chainlink
+        symbols: {okx: LINK/USDT, kraken: LINK/USD, coinbase: LINK/USD, yahoo: LINK-USD}
+
+  stocks:
+    basis: >-
+      Market capitalisation of US-listed companies, including ADRs
+      (stocktitan.net/rankings/companies-market-cap, cross-checked against the
+      market capitalisation Yahoo Finance reports).
+    defaults:
+      quote_currency: USD
+      quantity_step: "1"
+      calendar: XNAS
+    assets:
+      - {symbol: NVDA, name: NVIDIA Corporation, symbols: {yahoo: NVDA}}
+      - {symbol: AAPL, name: Apple Inc., symbols: {yahoo: AAPL}}
+      - {symbol: GOOGL, name: Alphabet Inc., symbols: {yahoo: GOOGL}}
+      - {symbol: MSFT, name: Microsoft Corporation, symbols: {yahoo: MSFT}}
+      - {symbol: AMZN, name: "Amazon.com, Inc.", symbols: {yahoo: AMZN}}
+      - symbol: TSM
+        name: Taiwan Semiconductor Manufacturing (ADR)
+        calendar: XNYS
+        symbols: {yahoo: TSM}
+      - {symbol: SPCX, name: Space Exploration Technologies Corp., symbols: {yahoo: SPCX}}
+      - {symbol: META, name: "Meta Platforms, Inc.", symbols: {yahoo: META}}
+      - {symbol: AVGO, name: Broadcom Inc., symbols: {yahoo: AVGO}}
+      - {symbol: TSLA, name: "Tesla, Inc.", symbols: {yahoo: TSLA}}
+
+  etfs:
+    basis: >-
+      Assets under management of US-listed ETFs (LSEG Lipper "largest ETFs in the
+      world", cross-checked against the total assets Yahoo Finance reports). The
+      order below the first five is approximate: Yahoo's figures for Vanguard
+      funds include their mutual-fund share classes.
+    defaults:
+      quote_currency: USD
+      quantity_step: "1"
+      calendar: XNYS
+    assets:
+      - {symbol: VOO, name: Vanguard S&P 500 ETF, symbols: {yahoo: VOO}}
+      - {symbol: IVV, name: iShares Core S&P 500 ETF, symbols: {yahoo: IVV}}
+      - {symbol: SPY, name: SPDR S&P 500 ETF Trust, symbols: {yahoo: SPY}}
+      - {symbol: VTI, name: Vanguard Total Stock Market ETF, symbols: {yahoo: VTI}}
+      - {symbol: QQQ, name: Invesco QQQ Trust, calendar: XNAS, symbols: {yahoo: QQQ}}
+      - {symbol: VUG, name: Vanguard Growth ETF, symbols: {yahoo: VUG}}
+      - {symbol: VEA, name: Vanguard FTSE Developed Markets ETF, symbols: {yahoo: VEA}}
+      - {symbol: VTV, name: Vanguard Value ETF, symbols: {yahoo: VTV}}
+      - {symbol: IEFA, name: iShares Core MSCI EAFE ETF, symbols: {yahoo: IEFA}}
+      - {symbol: BND, name: Vanguard Total Bond Market ETF, calendar: XNAS, symbols: {yahoo: BND}}
+
+  commodities:
+    basis: >-
+      The most traded commodity futures on CME Group exchanges, as front-month
+      contracts on Yahoo Finance. A position is unleveraged exposure to the quoted
+      price: no contract size, margin or expiry. Grain futures are quoted in US
+      cents (USX).
+    defaults:
+      quote_currency: USD
+      quantity_step: "0.01"
+      calendar: CMES
+    assets:
+      - {symbol: GC=F, name: Gold (front-month future), symbols: {yahoo: GC=F}}
+      - {symbol: SI=F, name: Silver (front-month future), symbols: {yahoo: SI=F}}
+      - {symbol: CL=F, name: WTI Crude Oil (front-month future), symbols: {yahoo: CL=F}}
+      - {symbol: BZ=F, name: Brent Crude Oil (front-month future), symbols: {yahoo: BZ=F}}
+      - {symbol: NG=F, name: Natural Gas (front-month future), symbols: {yahoo: NG=F}}
+      - {symbol: HG=F, name: Copper (front-month future), symbols: {yahoo: HG=F}}
+      - {symbol: PL=F, name: Platinum (front-month future), symbols: {yahoo: PL=F}}
+      - {symbol: PA=F, name: Palladium (front-month future), symbols: {yahoo: PA=F}}
+      - symbol: ZC=F
+        name: Corn (front-month future)
+        quote_currency: USX
+        symbols: {yahoo: ZC=F}
+      - symbol: ZW=F
+        name: Wheat (front-month future)
+        quote_currency: USX
+        symbols: {yahoo: ZW=F}
+
+  forex:
+    basis: >-
+      The most traded currency pairs by turnover (BIS Triennial Central Bank
+      Survey), with the major euro crosses. One unit is one unit of the first
+      currency, priced in the second.
+    defaults:
+      quote_currency: USD
+      quantity_step: "0.01"
+      calendar: FOREX
+    assets:
+      - {symbol: EURUSD, name: EUR/USD, symbols: {yahoo: EURUSD=X}}
+      - {symbol: USDJPY, name: USD/JPY, quote_currency: JPY, symbols: {yahoo: USDJPY=X}}
+      - {symbol: GBPUSD, name: GBP/USD, symbols: {yahoo: GBPUSD=X}}
+      - {symbol: AUDUSD, name: AUD/USD, symbols: {yahoo: AUDUSD=X}}
+      - {symbol: USDCAD, name: USD/CAD, quote_currency: CAD, symbols: {yahoo: USDCAD=X}}
+      - {symbol: USDCHF, name: USD/CHF, quote_currency: CHF, symbols: {yahoo: USDCHF=X}}
+      - {symbol: NZDUSD, name: NZD/USD, symbols: {yahoo: NZDUSD=X}}
+      - {symbol: EURGBP, name: EUR/GBP, quote_currency: GBP, symbols: {yahoo: EURGBP=X}}
+      - {symbol: EURJPY, name: EUR/JPY, quote_currency: JPY, symbols: {yahoo: EURJPY=X}}
+      - {symbol: EURCHF, name: EUR/CHF, quote_currency: CHF, symbols: {yahoo: EURCHF=X}}

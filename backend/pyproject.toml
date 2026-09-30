@@ -1,0 +1,50 @@
+[project]
+name = "paper-trading-backend"
+version = "0.1.0"
+description = "Paper trading platform API"
+authors = [
+    { name = "Michael-Exel-6767", email = "46643547+Michael-Exel-6767@users.noreply.github.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "alembic>=1.20.0",
+    "argon2-cffi>=25.1.0",
+    "ccxt>=4.5.84",
+    "exchange-calendars>=4.13.2",
+    "fastapi>=0.142.1",
+    "greenlet>=3.5.6",
+    "pydantic-settings>=2.15.0",
+    "pydantic[email]>=2.13.5",
+    "pyyaml>=6.0.3",
+    "sqlalchemy>=2.1.1",
+    "uvicorn[standard]>=0.54.0",
+    "yfinance>=1.7.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.9",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = ["live: hits real market-data sources over the network"]
+addopts = "-m 'not live' -q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
