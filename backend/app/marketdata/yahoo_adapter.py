@@ -37,7 +37,8 @@ def quote_from_info(symbol: str, info: dict) -> Quote:
     if last is None or last <= 0:
         raise NotListed(f"yahoo has no price for {symbol}")
     bid, ask = to_decimal(info.get("bid")), to_decimal(info.get("ask"))
-    if not _plausible_bid_ask(last, bid, ask):
+    # For currency pairs Yahoo's bid and ask do not track the last price at all.
+    if info.get("quoteType") == "CURRENCY" or not _plausible_bid_ask(last, bid, ask):
         bid = ask = None
     observed = info.get("regularMarketTime")
     observed_at = datetime.fromtimestamp(observed, UTC) if observed else datetime.now(UTC)

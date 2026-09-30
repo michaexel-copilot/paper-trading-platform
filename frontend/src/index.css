@@ -1,111 +1,501 @@
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
-
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
   color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #15181d;
+  --muted: #667085;
+  --line: #e3e6eb;
+  --accent: #2456d6;
+  --accent-text: #ffffff;
+  --gain: #12805c;
+  --loss: #c8372d;
+  --warn-bg: #fff6de;
+  --warn-text: #7a5600;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+    --bg: #111418;
+    --surface: #1a1e24;
+    --text: #e8eaee;
+    --muted: #98a2b3;
+    --line: #2b313a;
+    --accent: #6d94f5;
+    --accent-text: #0b1020;
+    --gain: #3fbf93;
+    --loss: #f0766c;
+    --warn-bg: #3a2f10;
+    --warn-text: #f1d48a;
   }
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
+* {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
+  background: var(--bg);
+  color: var(--text);
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
 }
 
 h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
+  font-size: 1.5rem;
+  margin: 0.5rem 0 1rem;
 }
+
 h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
+  font-size: 1.1rem;
+  margin: 1.75rem 0 0.6rem;
 }
-p {
+
+.card h2 {
+  margin-top: 0;
+}
+
+main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 3rem;
+}
+
+footer {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1.25rem 2rem;
+  font-size: 0.85rem;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.7rem 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar nav {
+  display: flex;
+  gap: 1rem;
+}
+
+.topbar nav a {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.topbar nav a.active {
+  color: var(--text);
+}
+
+.brand {
+  font-weight: 700;
+}
+
+.spacer,
+.grow {
+  flex: 1;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.pad {
+  padding: 2rem;
+}
+
+.error {
+  color: var(--loss);
+}
+
+.gain,
+td.buy {
+  color: var(--gain);
+}
+
+.loss,
+td.sell {
+  color: var(--loss);
+}
+
+.notice {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  margin: 0.6rem 0;
+}
+
+.notice a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem;
+  margin: 1rem 0;
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.row.between {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.row .wide {
+  flex-basis: 100%;
   margin: 0;
 }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+.stack p {
+  margin: 0;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+input,
+select,
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0.45rem 0.65rem;
+}
+
+input:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+button.primary.buy {
+  background: var(--gain);
+  border-color: var(--gain);
+  color: #fff;
+}
+
+button.primary.sell,
+button.danger {
+  background: var(--loss);
+  border-color: var(--loss);
+  color: #fff;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+}
+
+button.link.danger {
+  background: none;
+  color: var(--loss);
+}
+
+form.inline {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--line);
+  margin: 1.5rem 0 1rem;
+}
+
+.tabs button {
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  padding: 0.5rem 0.9rem;
+}
+
+.tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.tabs.small {
+  margin: 0;
+  border-bottom: none;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.segmented button.active.buy {
+  background: var(--gain);
+  border-color: var(--gain);
+  color: #fff;
+}
+
+.segmented button.active.sell {
+  background: var(--loss);
+  border-color: var(--loss);
+  color: #fff;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+th {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+td.num,
+th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+td.actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+td.actions > * + * {
+  margin-left: 0.75rem;
+}
+
+td.source {
+  max-width: 22rem;
+  font-size: 0.85rem;
+}
+
+tr.dim td {
+  opacity: 0.6;
+}
+
+tr.confirm td,
+tr.expanded td {
+  background: var(--bg);
+}
+
+.card table {
+  margin-top: 0.75rem;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  margin-right: 0.3rem;
+  white-space: nowrap;
+}
+
+.badge.stale,
+.badge.delayed,
+.badge.open {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-color: transparent;
+}
+
+.badge.unavailable,
+.badge.rejected {
+  color: var(--loss);
+  border-color: var(--loss);
+}
+
+.badge.fresh,
+.badge.filled {
+  color: var(--gain);
+  border-color: var(--gain);
+}
+
+td .badge.stale {
+  margin-left: 0.4rem;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.85rem;
+}
+
+.stats strong {
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.chart {
+  height: 340px;
+  width: 100%;
+}
+
+dl.preview,
+dl.detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.3rem 1rem;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+dl.preview {
+  padding: 0.7rem;
+  background: var(--bg);
+  border-radius: 8px;
+}
+
+dl dt {
+  color: var(--muted);
+}
+
+dl dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+dl.preview dd {
+  text-align: right;
+}
+
+ul.plain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.auth {
+  max-width: 380px;
+  margin: 8vh auto;
+  padding: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.auth h1 {
+  margin-top: 0;
+}
+
+/* Lightweight Charts lays itself out with a table; keep the page's table styling off it. */
+.chart table,
+.chart td {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  width: auto;
+}
+
+td select,
+td button:not(.link) {
+  padding: 0.2rem 0.5rem;
 }

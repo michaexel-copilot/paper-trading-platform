@@ -1,0 +1,5 @@
+{
+  "note": "Throwaway account for checking the UI by hand against a local development server. Not used by the automated tests.",
+  "email": "browser-check@example.com",
+  "password": "local-dev-only-7421"
+}
