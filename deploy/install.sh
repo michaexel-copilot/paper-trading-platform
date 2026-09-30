@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/michaexel-copilot/paper-trading-platform/main/deploy/install.sh | sudo bash
 #
-# With options:
+# Where curl is missing, "wget -qO- <url> | sudo bash" does the same. With options:
 #
 #   curl -fsSL … | sudo bash -s -- --ref v1.0 --port 9000
 #   sudo deploy/install.sh --ref v1.0
@@ -288,6 +288,11 @@ main() {
     # "sudo bash" can keep the caller's HOME; tool caches belong in root's.
     HOME=$(getent passwd 0 | cut -d: -f6)
     export HOME
+    # uv goes into /usr/local/bin, which a root shell without sudo may not search.
+    case ":$PATH:" in
+        *:/usr/local/bin:*) ;;
+        *) PATH=/usr/local/bin:$PATH ;;
+    esac
 
     step "Installing prerequisites (git, Node.js, uv)"
     install_prerequisites
