@@ -7,7 +7,7 @@ Decisions taken with the user before planning: Python API with a React UI; multi
 External facts that constrain the design:
 
 - ccxt covers crypto exchanges only. Yahoo Finance is not a ccxt exchange, so "ccxt as adapter" is realised as ccxt for crypto plus an in-house adapter interface with ccxt's shape for everything else.
-- ccxt's public `load_markets()` returns each market's `maker` and `taker` rates, amount precision and minimum order size without an API key. OKX's published base-tier spot rates are 0.08% maker and 0.10% taker.
+- ccxt's public `load_markets()` returns each market's amount precision and minimum order size without an API key. It also returns `maker` and `taker` rates, but those are defaults compiled into the library, not the exchange's schedule: on 2026-09-30 it reported 0.10%/0.15% for OKX, whose published base tier is 0.08% maker and 0.10% taker, and it lagged Kraken and Coinbase in the same way.
 - Yahoo Finance has no official API. `yfinance` uses undocumented endpoints, quotes on some exchanges are delayed by up to 15 minutes, bid and ask are often missing, and the terms allow personal use only.
 - TradingView has no market-data API for subscribers on any plan; its REST API is for broker integrations. Its charting library, Lightweight Charts, is open source (Apache 2.0).
 
@@ -48,7 +48,7 @@ frontend/
   src/  api/  pages/  components/
 ```
 
-FastAPI serves JSON under `/api` and, in production, the built SPA as static files, so there is one deployable. In development Vite proxies `/api` to the backend. TypeScript types are generated from the OpenAPI document with `openapi-typescript`.
+FastAPI serves JSON under `/api` and, in production, the built SPA as static files, so there is one deployable. In development Vite proxies `/api` to the backend. TypeScript types are generated from the OpenAPI document with `openapi-typescript`, run through `npx` because it does not yet accept the TypeScript 6 that the Vite template installs.
 
 Alternative considered: Next.js full-stack in TypeScript. Rejected by the user in favour of Python because `yfinance` is the most robust Yahoo client and Python leaves the door open to backtesting.
 
@@ -58,7 +58,8 @@ Alternative considered: Next.js full-stack in TypeScript. Rejected by the user i
 
 | Method | Returns |
 | --- | --- |
-| `load_markets()` | instruments with symbol, quote currency, amount step, minimum amount, maker and taker rates where published |
+| `load_markets()` | instruments the source can enumerate, with symbol, quote currency, amount step and minimum amount |
+| `instrument(symbol)` | one instrument, or a not-listed error; the only lookup Yahoo supports, since it cannot enumerate |
 | `fetch_ticker(symbol)` | `Quote(last, bid, ask, currency, observed_at, source)` |
 | `fetch_ohlcv(symbol, timeframe, since, limit)` | list of bars |
 | `search(query)` | matching instruments with a detected asset class |
@@ -116,7 +117,7 @@ Alternative considered: JWT bearer tokens. Rejected because they cannot be revok
 3. checks the cash balance (buy) or the holding (sell) and marks the order rejected if it fails;
 4. updates cash and the position, inserts the trade and a value snapshot.
 
-On SQLite the transaction starts with `BEGIN IMMEDIATE`; on Postgres the portfolio row is locked with `SELECT … FOR UPDATE`. Duplicate submissions are blocked by a unique constraint on `(portfolio_id, client_order_id)`, where the UI generates the id when the order form opens.
+The claim in step 1 is the first statement of the transaction, so on SQLite it takes the database's write lock before any balance is read, which has the effect of `BEGIN IMMEDIATE`; on Postgres the portfolio row is additionally locked with `SELECT … FOR UPDATE`. The quote, the conversion rates and the prices for the value snapshot are gathered before the transaction starts, so no write lock is ever held while waiting for a price source. Duplicate submissions are blocked by a unique constraint on `(portfolio_id, client_order_id)`, where the UI generates the id when the order form opens.
 
 Fill prices follow the paper-trading and fee-models specs. Fills are all-or-nothing.
 
@@ -128,21 +129,21 @@ Alternative considered: a separate worker process or Celery. Rejected as unneces
 
 ### 11. Trading hours from `exchange-calendars`
 
-`marketdata/calendars.py` maps each asset's calendar code to a rule: `24/7` for crypto; an `exchange-calendars` code such as `XNYS`, `XNAS` or `XETR` for stocks and ETFs, derived from the exchange Yahoo reports; a fixed rule for forex (Sunday 22:00 UTC to Friday 22:00 UTC); the CME and ICE futures calendars for commodities.
+`marketdata/calendars.py` maps each asset's calendar code to a rule: `24/7` for crypto; an `exchange-calendars` code such as `XNYS`, `XNAS` or `XETR` for stocks and ETFs, derived from the exchange Yahoo reports; a fixed rule for forex (Sunday 22:00 UTC to Friday 22:00 UTC); the CME Globex calendar (`CMES`) for commodities. Grain futures trade shorter CBOT sessions than that calendar says; the freshness rule covers the difference, because an order cannot fill on a quote older than 20 minutes. Exchanges without a calendar in `exchange-calendars` get a weekday rule built from the session times Yahoo reports, without holidays.
 
 ### 12. Seed catalog as a reviewed data file
 
-`seed/assets.yaml` lists ten assets per class with their per-source symbols. The seeder is idempotent, keyed on the canonical symbol. Proposed content, to be checked against current rankings when the file is written:
+`seed/assets.yaml` lists ten assets per class with their per-source symbols. The seeder is idempotent, keyed on the canonical symbol. Content as checked against public listings on 2026-09-30:
 
 | Class | Ranking basis | Assets |
 | --- | --- | --- |
-| crypto | market capitalisation, stablecoins excluded | BTC, ETH, XRP, BNB, SOL, DOGE, ADA, TRX, LINK, AVAX |
-| stocks | market capitalisation, US-listed | NVDA, MSFT, AAPL, GOOGL, AMZN, META, AVGO, TSLA, BRK-B, LLY |
-| ETFs | assets under management | SPY, IVV, VOO, VTI, QQQ, VEA, VUG, IEFA, VTV, BND |
+| crypto | market capitalisation, stablecoins excluded | BTC, ETH, BNB, XRP, SOL, TRX, ZEC, HYPE, DOGE, LINK |
+| stocks | market capitalisation, US-listed including ADRs | NVDA, AAPL, GOOGL, MSFT, AMZN, TSM, SPCX, META, AVGO, TSLA |
+| ETFs | assets under management | VOO, IVV, SPY, VTI, QQQ, VUG, VEA, VTV, IEFA, BND |
 | commodities | front-month futures by traded volume | GC=F, SI=F, CL=F, BZ=F, NG=F, HG=F, PL=F, PA=F, ZC=F, ZW=F |
 | forex | traded volume | EURUSD, USDJPY, GBPUSD, AUDUSD, USDCAD, USDCHF, NZDUSD, EURGBP, EURJPY, EURCHF |
 
-BNB is not listed on OKX, so it exercises the fallback chain from day one. Commodities are simulated as unleveraged exposure to the front-month futures price: one unit is one unit of the quoted price, fractional quantities allowed, with no contract size, margin or expiry.
+Figure Heloc, a tokenised loan pool that ranks in the crypto top ten, is left out because no configured source has a market for it. All ten seeded coins are listed on OKX (BNB included, contrary to what the plan first assumed), so the fallback chain is exercised by coins added through search and by source failures, not by the seed. The ETF order below the first five is approximate, because Yahoo's asset figures for Vanguard funds include their mutual-fund share classes. Grain futures are quoted in US cents (`USX`). Commodities are simulated as unleveraged exposure to the front-month futures price: one unit is one unit of the quoted price, fractional quantities allowed, with no contract size, margin or expiry.
 
 Quantity steps: from the exchange's amount precision for crypto; 1 for stocks and ETFs; 0.01 for commodities and forex.
 
@@ -150,14 +151,16 @@ Quantity steps: from the exchange's amount precision for crypto; 1 for stocks an
 
 `seed/fee_profiles.yaml` is loaded into `fee_profiles`. `trading/fees.py` implements the formula in the fee-models spec as a pure function, which makes it directly unit-testable. The maximum charge may be an absolute amount or a percentage of trade value.
 
-| Profile | Classes | Charges (to be verified against the published schedule when seeded) | Default for |
+| Profile | Classes | Charges (checked against the published schedules on 2026-09-30) | Default for |
 | --- | --- | --- | --- |
-| OKX spot, base tier | crypto | maker 0.08%, taker 0.10%; per-market rates from `load_markets()` take precedence | crypto |
+| Exchange spot, base tier | crypto | the base-tier rates of the exchange that priced the fill: OKX 0.08%/0.10%, Kraken 0.40%/0.80%, Coinbase Advanced (EU) 0.25%/0.50%; OKX's rates for any other source | crypto |
 | Interactive Brokers Fixed, US | stocks, ETFs | USD 0.005 per share, minimum USD 1.00, maximum 1% of trade value; assumed spread 0.02% | stocks, ETFs |
 | Flat fee per order | stocks, ETFs | EUR 1.00 per order; assumed spread 0.02% | — |
 | Interactive Brokers FX | forex | 0.002% of trade value, minimum USD 2.00; assumed spread 0.01% | forex |
 | Spread only | commodities, forex | no commission; assumed spread 0.05% | commodities |
 | Zero commission | all | no charges, no assumed spread | — |
+
+The crypto profile carries a table of published base-tier rates per exchange, each with its source and the date it was checked. A fill is charged the rates of the exchange that priced it, and a fill priced by a source without a schedule (Yahoo) uses the profile's own rates and is flagged as a fallback on the trade. ccxt's per-market rates are not used, because they are library defaults that lag the exchanges (see Context).
 
 Fees are charged in cash in the portfolio's base currency. Real crypto exchanges deduct the buy fee from the asset received; charging cash instead keeps position quantities equal to order quantities and changes the result by a negligible amount.
 
@@ -165,7 +168,7 @@ The commodity default is an approximation: no retail venue sells unleveraged, fr
 
 ### 14. Currencies
 
-Portfolio base currency is EUR or USD. Conversion rates come from the forex quotes already in the catalog (`EURUSD=X` on Yahoo), through the same cache. USDT-quoted prices are treated as USD one to one.
+Portfolio base currency is EUR or USD. Conversion rates come from the forex quotes already in the catalog (`EURUSD=X` on Yahoo), through the same cache. Any other quote currency (JPY, CHF, CAD or GBP for the seeded forex pairs) is converted with its own Yahoo pair. USDT-quoted prices are treated as USD one to one, and the sub-units Yahoo quotes in (`GBp`, `USX`) are scaled to their currency. A conversion rate is used even when the forex market is closed, so crypto can be traded in a EUR portfolio at the weekend at Friday's closing rate.
 
 ### 15. Frontend
 

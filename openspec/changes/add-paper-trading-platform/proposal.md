@@ -8,7 +8,7 @@ There is no way to try out a trading idea across crypto, stocks, ETFs, commoditi
 - Add user accounts (register, log in, log out); every portfolio, order and trade belongs to exactly one user and is invisible to others.
 - Add an asset catalog seeded with the top 10 assets in each of five asset classes: crypto, stocks, ETFs, commodities and forex. Users can also search for and add assets beyond the seed list.
 - Add a market-data layer with a uniform adapter interface modelled on ccxt's unified API. First adapters: OKX through ccxt (crypto) and Yahoo Finance (stocks, ETFs, commodities, forex).
-- Add source fallback: when the preferred source does not list an asset or is failing, the next source in that asset class's chain is used (for example BNB is not listed on OKX, so it resolves through another ccxt exchange or Yahoo). Every quote carries its source and timestamp.
+- Add source fallback: when the preferred source does not list an asset or is failing, the next source in that asset class's chain is used (for example a coin that OKX does not list resolves through another ccxt exchange or Yahoo). Every quote carries its source and timestamp.
 - Add portfolios: a user creates a portfolio with a base currency and starting cash, adds assets to it, and sees positions, cash, valuation, profit and loss, fees paid and a value-over-time chart.
 - Add simulated trading: market, limit and stop orders filled against real quotes, respecting trading hours, quote freshness, exchange minimums and available cash or holdings. Long-only, no leverage.
 - Add fee models: every fill is charged according to a real published fee schedule (OKX maker/taker rates for crypto; a selectable broker fee profile for the other classes) and the fee is recorded on the trade.

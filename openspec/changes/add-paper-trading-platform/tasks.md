@@ -4,7 +4,7 @@
 - [x] 1.2 Create `backend/` with `uv init`, add fastapi, uvicorn, sqlalchemy, aiosqlite, alembic, pydantic-settings, argon2-cffi, ccxt, yfinance, exchange-calendars, pyyaml and dev dependencies pytest, pytest-asyncio, httpx, ruff; verify `uv sync` succeeds and `uv run python -c "import ccxt, yfinance"` exits 0
 - [x] 1.3 Add `app/main.py` with a `/api/health` endpoint and `app/config.py` reading `DATABASE_URL` and the source chains from the environment; verify `uv run uvicorn app.main:app` answers `/api/health` with 200
 - [x] 1.4 Scaffold `frontend/` with Vite (React, TypeScript), add react-router, @tanstack/react-query, lightweight-charts, vitest and openapi-typescript, and proxy `/api` to the backend; verify `npm run dev` shows a page that displays the health check result
-- [ ] 1.5 Add a root `README.md` with the two start commands and the environment settings; verify a fresh clone starts by following it
+- [x] 1.5 Add a root `README.md` with the two start commands and the environment settings; verify a fresh clone starts by following it
 
 ## 2. Database foundation
 
@@ -76,20 +76,20 @@
 
 ## 9. Frontend
 
-- [ ] 9.1 Generate API types from the OpenAPI document and build the fetch client with session handling and redirect to sign-in on 401; verify `npm run typecheck` passes and an unauthenticated visit lands on sign-in
-- [ ] 9.2 Build the register and sign-in pages with error display; verify by registering, signing out and signing in again in the browser
-- [ ] 9.3 Build the portfolio list with create, rename and delete-with-confirmation; verify creating a EUR portfolio shows its starting cash as total value
-- [ ] 9.4 Build the asset browser with the five class tabs, live quotes with source and delayed or stale labels, unavailable marking, search and add-to-portfolio; verify each class shows ten assets and BNB shows a non-OKX source
-- [ ] 9.5 Build the asset detail page with a Lightweight Charts price chart (daily and hourly) and market status; verify the chart renders a year of daily bars for one asset of each class
-- [ ] 9.6 Build the order ticket for market, limit and stop orders with client-side step and minimum validation, fee and cost preview, a fresh client order id per form, and refusal messages from the API; verify vitest tests for the validation and a manual market buy that matches its preview
-- [ ] 9.7 Build the portfolio detail page with cash and available cash, holdings with profit and loss, tracked assets, performance figures, fees by class and the value chart, polling only visible assets; verify the figures change after a trade without a page reload
-- [ ] 9.8 Build the orders and trades views with cancel for open orders, trade detail and CSV download; verify cancelling an open limit order restores available cash on screen
-- [ ] 9.9 Build the per-portfolio fee profile settings showing each profile's charges, source and date checked; verify switching the stock profile changes the next order preview
-- [ ] 9.10 Add the notices for delayed quotes, futures roll on commodities and unadjusted splits; verify they appear on the relevant asset pages
+- [x] 9.1 Generate API types from the OpenAPI document and build the fetch client with session handling and redirect to sign-in on 401; verify `npm run typecheck` passes and an unauthenticated visit lands on sign-in
+- [x] 9.2 Build the register and sign-in pages with error display; verify by registering, signing out and signing in again in the browser
+- [x] 9.3 Build the portfolio list with create, rename and delete-with-confirmation; verify creating a EUR portfolio shows its starting cash as total value
+- [x] 9.4 Build the asset browser with the five class tabs, live quotes with source and delayed or stale labels, unavailable marking, search and add-to-portfolio; verify each class shows ten assets and a coin that OKX does not list shows a non-OKX source
+- [x] 9.5 Build the asset detail page with a Lightweight Charts price chart (daily and hourly) and market status; verify the chart renders a year of daily bars for one asset of each class
+- [x] 9.6 Build the order ticket for market, limit and stop orders with client-side step and minimum validation, fee and cost preview, a fresh client order id per form, and refusal messages from the API; verify vitest tests for the validation and a manual market buy that matches its preview
+- [x] 9.7 Build the portfolio detail page with cash and available cash, holdings with profit and loss, tracked assets, performance figures, fees by class and the value chart, polling only visible assets; verify the figures change after a trade without a page reload
+- [x] 9.8 Build the orders and trades views with cancel for open orders, trade detail and CSV download; verify cancelling an open limit order restores available cash on screen
+- [x] 9.9 Build the per-portfolio fee profile settings showing each profile's charges, source and date checked; verify switching the stock profile changes the next order preview
+- [x] 9.10 Add the notices for delayed quotes, futures roll on commodities and unadjusted splits; verify they appear on the relevant asset pages
 
 ## 10. Integration and delivery
 
-- [ ] 10.1 Serve the built SPA from FastAPI with client-side route fallback; verify `npm run build` followed by starting only the backend serves the app and a deep link reloads correctly
-- [ ] 10.2 Run the full flow against live sources: register, create a portfolio, buy one asset from each class that is open, place a resting limit order, let the matcher fill or cancel it, and export trades; verify every trade shows a real source, observation time and non-zero fee where the profile charges one
-- [ ] 10.3 Run `uv run pytest`, `uv run ruff check`, `npm run typecheck` and `npm test`; verify all pass, and run the `live`-marked adapter tests once and record the result in the README
-- [ ] 10.4 Run `openspec validate add-paper-trading-platform --strict`; verify it reports no errors
+- [x] 10.1 Serve the built SPA from FastAPI with client-side route fallback; verify `npm run build` followed by starting only the backend serves the app and a deep link reloads correctly
+- [x] 10.2 Run the full flow against live sources: register, create a portfolio, buy one asset from each class that is open, place a resting limit order, let the matcher fill or cancel it, and export trades; verify every trade shows a real source, observation time and non-zero fee where the profile charges one
+- [x] 10.3 Run `uv run pytest`, `uv run ruff check`, `npm run typecheck` and `npm test`; verify all pass, and run the `live`-marked adapter tests once and record the result in the README
+- [x] 10.4 Run `openspec validate add-paper-trading-platform --strict`; verify it reports no errors
