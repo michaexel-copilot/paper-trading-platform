@@ -1,0 +1,17 @@
+[Unit]
+Description=Paper Trading Platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@CHECKOUT@/backend
+Environment=HOST=@HOST@ PORT=@PORT@
+EnvironmentFile=-@CHECKOUT@/backend/.env
+ExecStart=@UV@ run uvicorn app.main:app --host ${HOST} --port ${PORT}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
