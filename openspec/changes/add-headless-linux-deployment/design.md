@@ -102,7 +102,9 @@ the step):
 3. Node.js: keep the installed one if `node --version` is `>=22.12.0`; otherwise install
    Node 22 from NodeSource. One threshold rather than Vite's two ranges.
 4. uv: keep it if on `PATH`; otherwise run Astral's installer with
-   `UV_INSTALL_DIR=/usr/local/bin` and `UV_NO_MODIFY_PATH=1`.
+   `UV_INSTALL_DIR=/usr/local/bin` and `UV_NO_MODIFY_PATH=1`. The installer puts
+   `/usr/local/bin` on its own `PATH` first: a root shell that did not come through
+   `sudo` (`pct exec` on Proxmox, for one) may not have it.
 5. Create the system user: `useradd --system --no-create-home --shell /usr/sbin/nologin papertrading`, if absent.
 6. Code: `git clone` if `/opt/paper-trading/repo` is absent, else `git fetch --tags origin`.
    Then `git checkout --force` the ref and, if it is a branch, `git reset --hard origin/<ref>`.

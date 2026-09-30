@@ -11,9 +11,12 @@ and the web UI.
 - Outbound internet access: to GitHub, astral.sh, NodeSource, PyPI and the npm registry
   while installing, and to the market-data sources (OKX, Kraken, Coinbase, Yahoo
   Finance) while running.
-- About 1 GB of free memory for the frontend build and 2 GB of disk.
+- 1 GB of memory and 2 GB of free disk. An installation takes about 1.2 GB of disk; the
+  running service uses roughly 250 MB of memory.
 
-For other distributions see [Manual installation](#manual-installation).
+For other distributions see [Manual installation](#manual-installation). For a
+container on Proxmox VE, [proxmox.md](proxmox.md) walks through creating it and records
+the test run this deployment was verified with.
 
 ## Install
 
@@ -23,7 +26,16 @@ SSH into the machine and run:
 curl -fsSL https://raw.githubusercontent.com/michaexel-copilot/paper-trading-platform/main/deploy/install.sh | sudo bash
 ```
 
-When it finishes, the platform is running and the installer prints its address. Open
+Minimal images and container templates often have no `curl`. `wget` does the same:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/michaexel-copilot/paper-trading-platform/main/deploy/install.sh | sudo bash
+```
+
+If you are already root and the machine has no `sudo`, leave `sudo` out.
+
+A first installation takes between one and two minutes. When it finishes, the platform
+is running and the installer prints its address. Open
 `http://<server>:8000` from your own machine, create an account and trade. The first
 start checks every asset against the price sources, which takes about half a minute;
 the UI is usable meanwhile.
@@ -206,7 +218,17 @@ sudo systemctl start paper-trading
 Stop the service first: the database has companion files (`app.db-wal`, `app.db-shm`)
 that must be copied in a consistent state.
 
-To restore, stop the service, unpack with `sudo tar -xzf <file> -C /` and start it.
+To restore:
+
+```sh
+sudo systemctl stop paper-trading
+sudo rm -f /var/lib/paper-trading/app.db-wal /var/lib/paper-trading/app.db-shm
+sudo tar -xzf paper-trading-backup-<date>.tar.gz -C /
+sudo systemctl start paper-trading
+```
+
+The `rm` removes companion files of the database being replaced, which must not be
+combined with the restored one.
 
 ## Serve it over HTTPS
 
@@ -301,7 +323,17 @@ Nothing restarts the platform after a crash or a reboot in this mode.
 
 ### With systemd, by hand
 
-This is what the installer does, for a checkout at `/opt/paper-trading/repo`:
+This is what the installer does. Build the checkout at `/opt/paper-trading/repo` as
+root, with the Python interpreter next to it:
+
+```sh
+sudo git clone https://github.com/michaexel-copilot/paper-trading-platform.git /opt/paper-trading/repo
+cd /opt/paper-trading/repo
+(cd backend && sudo UV_PYTHON_INSTALL_DIR=/opt/paper-trading/python uv sync --frozen --no-dev)
+(cd frontend && sudo npm ci && sudo npm run build)
+```
+
+Then install the service:
 
 ```sh
 sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin papertrading
@@ -314,8 +346,8 @@ sudo systemctl enable --now paper-trading
 
 The checkout, and the Python interpreter its `backend/.venv` points to, must be readable
 by the `papertrading` user and must not be under `/home` or `/root`: the unit hides
-those directories from the service. If uv downloads Python for you, set
-`UV_PYTHON_INSTALL_DIR=/opt/paper-trading/python` when running `uv sync`.
+those directories from the service. That is what `UV_PYTHON_INSTALL_DIR` is for when uv
+downloads Python. For a checkout somewhere else, put its path in the `sed` command.
 
 ## Troubleshooting
 

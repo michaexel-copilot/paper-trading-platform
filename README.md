@@ -53,7 +53,8 @@ curl -fsSL https://raw.githubusercontent.com/michaexel-copilot/paper-trading-pla
 ```
 
 Run it again to upgrade. [docs/deployment.md](docs/deployment.md) covers the options,
-configuration, daily operation, backups and HTTPS.
+configuration, daily operation, backups and HTTPS. [docs/proxmox.md](docs/proxmox.md)
+shows the same on a Proxmox VE container, with the record of the test run.
 
 ## Settings
 
