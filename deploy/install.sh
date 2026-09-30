@@ -33,6 +33,9 @@ else
   if [ -d "$CLONE_DIR/.git" ]; then
     log "updating existing checkout in $CLONE_DIR"
     git -C "$CLONE_DIR" pull --ff-only
+  elif [ -n "${DEPLOY_REF:-}" ]; then
+    log "cloning $REPO_URL ($DEPLOY_REF) into $CLONE_DIR"
+    git clone --branch "$DEPLOY_REF" "$REPO_URL" "$CLONE_DIR"
   else
     log "cloning $REPO_URL into $CLONE_DIR"
     git clone "$REPO_URL" "$CLONE_DIR"
