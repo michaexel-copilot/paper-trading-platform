@@ -3,8 +3,10 @@
 #
 #   cp .env.docker.example .env && docker compose up -d --build
 #
-# TRAEFIK_NETWORK, TRAEFIK_ENTRYPOINT and TRAEFIK_CERTRESOLVER must match your
-# Traefik setup. Check with: docker network ls; grep -r certificatesResolvers <traefik dir>
+# The Hostinger Traefik runs with network_mode: host and the Docker provider, so it
+# reaches this container on the default compose network. TRAEFIK_ENTRYPOINT and
+# TRAEFIK_CERTRESOLVER must match its --entrypoints / --certificatesresolvers flags
+# (Hostinger template: websecure, letsencrypt).
 services:
   paper-trading:
     build: .
@@ -16,21 +18,13 @@ services:
       # CHAIN_CRYPTO: okx,kraken,coinbase,yahoo
     volumes:
       - paper-trading-data:/data
-    networks:
-      - traefik
     labels:
       - traefik.enable=true
-      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik}
       - traefik.http.routers.paper-trading.rule=Host(`${TRADING_DOMAIN:-trading.michaexel.de}`)
       - traefik.http.routers.paper-trading.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
       - traefik.http.routers.paper-trading.tls=true
       - traefik.http.routers.paper-trading.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}
       - traefik.http.services.paper-trading.loadbalancer.server.port=8000
-
-networks:
-  traefik:
-    name: ${TRAEFIK_NETWORK:-traefik}
-    external: true
 
 volumes:
   paper-trading-data:
