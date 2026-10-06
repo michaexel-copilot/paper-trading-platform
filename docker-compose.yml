@@ -1,7 +1,7 @@
 # Paper trading platform behind Traefik (e.g. the Hostinger "Ubuntu with Docker and
 # Traefik" VPS template). Traefik terminates TLS and routes by host name.
 #
-#   cp .env.docker.example .env && docker compose up -d --build
+#   cp .env.docker.example .env && docker compose up -d
 #
 # The Hostinger Traefik runs with network_mode: host and the Docker provider, so it
 # reaches this container on the default compose network. TRAEFIK_ENTRYPOINT and
@@ -9,8 +9,9 @@
 # (Hostinger template: websecure, letsencrypt).
 services:
   paper-trading:
-    build: .
-    image: paper-trading:latest
+    # Built by .github/workflows/docker-image.yml. To build locally instead, replace
+    # `image` with `build: .`.
+    image: ghcr.io/michaexel-copilot/paper-trading-platform:latest
     container_name: paper-trading
     restart: unless-stopped
     environment:

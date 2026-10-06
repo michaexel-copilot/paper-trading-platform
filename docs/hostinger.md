@@ -147,11 +147,17 @@ of the installer and Caddy. Create the DNS A record first (step 4), then on the 
 ```sh
 git clone https://github.com/michaexel-copilot/paper-trading-platform.git && cd paper-trading-platform
 cp .env.docker.example .env      # set TRADING_DOMAIN and the Traefik names
-docker compose up -d --build
+docker compose up -d
 ```
 
 `TRAEFIK_ENTRYPOINT` and `TRAEFIK_CERTRESOLVER` must match the existing Traefik (the
 template uses `websecure` and `letsencrypt`; see `/docker/traefik/docker-compose.yml`).
 That Traefik runs in host network mode and finds the container through the Docker
 socket, so no shared network is needed. The database lives in the `paper-trading-data` volume. Run one container
-only: the backend must not be scaled. Upgrade with `git pull && docker compose up -d --build`.
+only: the backend must not be scaled. Upgrade with `docker compose pull && docker compose up -d`.
+
+The image comes from GitHub Actions (`.github/workflows/docker-image.yml`) and is
+published to `ghcr.io/michaexel-copilot/paper-trading-platform`. The package must be
+public (GitHub: Packages, Package settings, Change visibility) so the server can pull
+it without a login. The Hostinger API cannot build images, so deploy through the
+image: create the compose project with `image:` and restart or update it from there.
