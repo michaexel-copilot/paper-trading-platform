@@ -150,7 +150,8 @@ cp .env.docker.example .env      # set TRADING_DOMAIN and the Traefik names
 docker compose up -d --build
 ```
 
-`TRAEFIK_NETWORK`, `TRAEFIK_ENTRYPOINT` and `TRAEFIK_CERTRESOLVER` must match the
-existing Traefik (`docker network ls`, and the `certificatesResolvers` entry in its
-config). The database lives in the `paper-trading-data` volume. Run one container
+`TRAEFIK_ENTRYPOINT` and `TRAEFIK_CERTRESOLVER` must match the existing Traefik (the
+template uses `websecure` and `letsencrypt`; see `/docker/traefik/docker-compose.yml`).
+That Traefik runs in host network mode and finds the container through the Docker
+socket, so no shared network is needed. The database lives in the `paper-trading-data` volume. Run one container
 only: the backend must not be scaled. Upgrade with `git pull && docker compose up -d --build`.
