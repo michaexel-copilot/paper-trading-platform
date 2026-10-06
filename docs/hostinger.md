@@ -137,3 +137,20 @@ in the repo. Create the token in hPanel (**Account → API**), then add it as
 `HOSTINGER_API_TOKEN` in the environment settings of the Claude Code session and start
 a new session. With it Claude can manage DNS records, the VPS firewall and the VPS
 itself.
+
+## Alternative: Docker with Traefik
+
+On the Hostinger template "Ubuntu 24.04 with Docker and Traefik" Traefik already owns
+ports 80 and 443, so use the repository's `Dockerfile` and `docker-compose.yml` instead
+of the installer and Caddy. Create the DNS A record first (step 4), then on the server:
+
+```sh
+git clone https://github.com/michaexel-copilot/paper-trading-platform.git && cd paper-trading-platform
+cp .env.docker.example .env      # set TRADING_DOMAIN and the Traefik names
+docker compose up -d --build
+```
+
+`TRAEFIK_NETWORK`, `TRAEFIK_ENTRYPOINT` and `TRAEFIK_CERTRESOLVER` must match the
+existing Traefik (`docker network ls`, and the `certificatesResolvers` entry in its
+config). The database lives in the `paper-trading-data` volume. Run one container
+only: the backend must not be scaled. Upgrade with `git pull && docker compose up -d --build`.
