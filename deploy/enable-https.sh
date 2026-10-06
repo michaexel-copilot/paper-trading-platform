@@ -6,7 +6,10 @@
 #
 # The domain's DNS A (and AAAA) record must already point at this server, and ports
 # 80 and 443 must be reachable. The platform is switched to listen on 127.0.0.1 only
-# and to set secure cookies. Running it again is safe.
+# and to set secure cookies. The site goes into /etc/caddy/conf.d/<domain>.caddy, so
+# other services can get their own subdomain next to it. Running it again is safe.
+# Note: the main Caddyfile is replaced by a single import line (a backup is kept as
+# Caddyfile.orig).
 # See docs/hostinger.md.
 set -euo pipefail
 
@@ -48,12 +51,21 @@ if ! command -v caddy >/dev/null; then
 fi
 
 echo "==> Configuring Caddy for $DOMAIN"
+# One file per site in conf.d, so further services on this server (other subdomains)
+# can be added without touching this one.
+CONF_DIR=/etc/caddy/conf.d
+IMPORT_LINE="import $CONF_DIR/*.caddy"
+install -d "$CONF_DIR"
 [[ -f $CADDYFILE && ! -f $CADDYFILE.orig ]] && cp "$CADDYFILE" "$CADDYFILE.orig"
-cat >"$CADDYFILE" <<CADDY
+if ! grep -qxF "$IMPORT_LINE" "$CADDYFILE" 2>/dev/null; then
+    echo "$IMPORT_LINE" >"$CADDYFILE"
+fi
+cat >"$CONF_DIR/$DOMAIN.caddy" <<CADDY
 $DOMAIN {
 	reverse_proxy 127.0.0.1:$PORT
 }
 CADDY
+caddy validate --config "$CADDYFILE" --adapter caddyfile >/dev/null || die "Caddy rejected the configuration"
 
 echo "==> Switching the platform to localhost-only with secure cookies"
 set_var() {

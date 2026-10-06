@@ -112,3 +112,28 @@ installer again.
 **Prices are missing.** The VPS needs outbound HTTPS to OKX, Kraken, Coinbase and Yahoo
 Finance. Some data-centre IP ranges are rate-limited by Yahoo; the other sources in a
 chain answer meanwhile. `journalctl -u paper-trading` shows which source failed.
+
+## More services on the same server
+
+`enable-https.sh` writes one file per domain to `/etc/caddy/conf.d/`, and the main
+Caddyfile only imports that directory. Another service gets its own subdomain by
+adding a file there, for example `/etc/caddy/conf.d/app.exel-xp.de.caddy`:
+
+```
+app.exel-xp.de {
+	reverse_proxy 127.0.0.1:9000
+}
+```
+
+then `sudo systemctl reload caddy`. Create the DNS A record first (or one wildcard
+record `*.exel-xp.de`). Services should listen on `127.0.0.1` only.
+
+## Administering the VPS with Claude (Hostinger MCP)
+
+The repository's `.mcp.json` registers the
+[Hostinger API MCP server](https://github.com/hostinger/api-mcp-server). It reads the
+API token from the environment variable `HOSTINGER_API_TOKEN`, so no secret is stored
+in the repo. Create the token in hPanel (**Account → API**), then add it as
+`HOSTINGER_API_TOKEN` in the environment settings of the Claude Code session and start
+a new session. With it Claude can manage DNS records, the VPS firewall and the VPS
+itself.
