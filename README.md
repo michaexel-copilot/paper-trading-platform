@@ -64,7 +64,7 @@ Set these as environment variables or in `backend/.env`.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `DATABASE_URL` | `sqlite+aiosqlite:///./data/app.db` | Any SQLAlchemy async URL. For Postgres use `postgresql+asyncpg://…` and add the `asyncpg` package. |
-| `CHAIN_CRYPTO` | `okx,kraken,coinbase,yahoo` | Price sources for crypto, tried in order. Any ccxt exchange id works. |
+| `CHAIN_CRYPTO` | `okx` | Price sources for crypto, tried in order. Any ccxt exchange id works. |
 | `CHAIN_STOCKS`, `CHAIN_ETFS`, `CHAIN_COMMODITIES`, `CHAIN_FOREX` | `yahoo` | Price sources for the other asset classes. |
 | `COOKIE_SECURE` | `false` | Set to `true` when serving over HTTPS. |
 | `AUTO_MIGRATE` | `true` | Apply database migrations at startup. Otherwise run `uv run alembic upgrade head`. |

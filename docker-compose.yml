@@ -16,7 +16,7 @@ services:
     restart: unless-stopped
     environment:
       COOKIE_SECURE: "true"
-      # CHAIN_CRYPTO: okx,kraken,coinbase,yahoo
+      # CHAIN_CRYPTO: okx
     volumes:
       - paper-trading-data:/data
     labels:

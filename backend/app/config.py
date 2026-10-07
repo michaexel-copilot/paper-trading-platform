@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/app.db"
 
     # Ordered source chains per asset class, comma separated.
-    chain_crypto: str = "okx,kraken,coinbase,yahoo"
+    chain_crypto: str = "okx"
     chain_stocks: str = "yahoo"
     chain_etfs: str = "yahoo"
     chain_commodities: str = "yahoo"
