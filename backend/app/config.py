@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     check_assets_on_startup: bool = True
     lock_file: str = "./data/backend.lock"
     frontend_dist: str = "../frontend/dist"
+    # Auflage 1/4 Startgatter (HED-36 Abschnitt 3.1, 3.4). Default AUS: diese Plattform
+    # hat auch Deployments ohne jeden Bezug zu Hedgeclip (siehe docs/hostinger.md,
+    # docs/proxmox.md), die BETRIEBSART/ARTEFAKT_ART nie gesetzt haben und sonst nicht
+    # mehr starten würden. Jede Hedgeclip-Installation (papier UND live) MUSS dies
+    # explizit auf True setzen -- siehe Issue-Kommentar HED-42 zur offenen Rückfrage,
+    # ob dieser Default so richtig ist.
+    enforce_startgatter: bool = False
 
     def chains(self) -> dict[str, list[str]]:
         return {

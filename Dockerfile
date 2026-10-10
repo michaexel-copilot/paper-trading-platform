@@ -8,6 +8,10 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM python:3.11-slim AS runtime
+# papier_artefakt (default) oder live_artefakt -- Auflage 4, Entwurf HED-36 Abschnitt
+# 3.4. Fest im Image, nicht zur Laufzeit wählbar: ein Laufzeitschalter wäre genau der
+# Konfigurationsfehler, den das Board als Hauptrisiko benannt hat.
+ARG ARTEFAKT_ART=papier_artefakt
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
 WORKDIR /app/backend
@@ -16,9 +20,16 @@ RUN uv sync --frozen --no-dev
 COPY backend/ ./
 COPY --from=frontend /build/frontend/dist /app/frontend/dist
 
+# Live-Artefakt: papier-spezifischer Code wird aus dem Image entfernt, nicht per
+# Schalter abgeschaltet (Auflage 4). Die Build-Prüfung läuft danach gegen das
+# Ergebnis, nicht nur gegen den Quellbaum vor der Entfernung.
+RUN if [ "$ARTEFAKT_ART" = "live_artefakt" ]; then rm -rf app/trading/papier; fi \
+    && .venv/bin/python scripts/build_checks.py --artefakt-art "$ARTEFAKT_ART"
+
 ENV PATH="/app/backend/.venv/bin:$PATH" \
     DATABASE_URL=sqlite+aiosqlite:////data/app.db \
-    LOCK_FILE=/data/backend.lock
+    LOCK_FILE=/data/backend.lock \
+    ARTEFAKT_ART=${ARTEFAKT_ART}
 VOLUME /data
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \

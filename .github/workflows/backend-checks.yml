@@ -1,0 +1,34 @@
+name: Backend checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/**
+      - .github/workflows/backend-checks.yml
+  pull_request:
+    paths:
+      - backend/**
+      - .github/workflows/backend-checks.yml
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - working-directory: backend
+        run: uv sync --frozen
+      - working-directory: backend
+        run: uv run ruff check .
+      - working-directory: backend
+        run: uv run pytest
+      # Auflage 3 (Entwurf HED-36 Abschnitt 3.3): die Build-Prüfung ist Teil der
+      # Abnahme und nicht abschaltbar. Nur papier_artefakt wird hier gegen den rohen
+      # Quellbaum geprüft -- live_artefakt braucht erst die Entfernung der
+      # papier-only-Pakete (Dockerfile-Stufe "live_artefakt"), ohne die der Check am
+      # unveränderten Quellbaum immer fehlschlägt. Das live-Dockerfile-Build macht
+      # genau das; scripts/build_checks.py deckt beide Fälle per Unit-Test ab
+      # (tests/test_build_checks.py, inklusive Testpfad 9).
+      - working-directory: backend
+        run: uv run python scripts/build_checks.py --artefakt-art papier_artefakt
