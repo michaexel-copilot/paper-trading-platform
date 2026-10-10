@@ -20,6 +20,8 @@ from app.dbtypes import utcnow
 from app.models.proposals import (
     ALLOWED_TRANSITIONS,
     STATE_ENTSTANDEN,
+    STATE_TO_LOG_CATEGORY,
+    STATE_WARTET_AUF_BOARD,
     Proposal,
     ProposalEvent,
 )
@@ -96,6 +98,56 @@ async def create_proposal(session: AsyncSession, signal: Signal, *, mode: str) -
     return proposal
 
 
+def _proposal_snapshot(proposal: Proposal) -> dict:
+    """Vollständige Kopie der zum Zeitpunkt des Protokolleintrags eingefrorenen
+
+    Proposal-Felder (Entwurf 8.3): Handelsinhalt, Stufe-1- und, falls vorhanden,
+    Stufe-2-Kennzahlen, Dashboard-Felder, relevante Zeitstempel. Werte, keine
+    Referenzen -- siehe Kommentar auf ProposalEvent.proposal_snapshot.
+    """
+    return {
+        "mode": proposal.mode,
+        "strategy_id": proposal.strategy_id,
+        "strategy_gate_status": proposal.strategy_gate_status,
+        "signal_id": proposal.signal_id,
+        "instrument": proposal.instrument,
+        "direction": proposal.direction,
+        "size": str(proposal.size),
+        "proposal_price": str(proposal.proposal_price),
+        "stop_price": str(proposal.stop_price),
+        "stop_distance": str(proposal.stop_distance),
+        "stop_distance_pct": str(proposal.stop_distance_pct),
+        "proposal_kind": proposal.proposal_kind,
+        "nav": str(proposal.nav) if proposal.nav is not None else None,
+        "drawdown": str(proposal.drawdown) if proposal.drawdown is not None else None,
+        "aggregate_risk_utilization_before": (
+            str(proposal.aggregate_risk_utilization_before)
+            if proposal.aggregate_risk_utilization_before is not None
+            else None
+        ),
+        "aggregate_risk_utilization_after": (
+            str(proposal.aggregate_risk_utilization_after)
+            if proposal.aggregate_risk_utilization_after is not None
+            else None
+        ),
+        "risk_eur": str(proposal.risk_eur) if proposal.risk_eur is not None else None,
+        "correlation_to_open_positions": (
+            str(proposal.correlation_to_open_positions)
+            if proposal.correlation_to_open_positions is not None
+            else None
+        ),
+        "price_age_seconds": proposal.price_age_seconds,
+        "limit_utilization_stage1": proposal.limit_utilization,
+        "limit_utilization_stage2": proposal.stage2_limit_utilization,
+        "signal_at": proposal.signal_at.isoformat(),
+        "stage1_at": proposal.stage1_at.isoformat() if proposal.stage1_at else None,
+        "displayed_at": proposal.displayed_at.isoformat() if proposal.displayed_at else None,
+        "decided_at": proposal.decided_at.isoformat() if proposal.decided_at else None,
+        "stage2_at": proposal.stage2_at.isoformat() if proposal.stage2_at else None,
+        "sent_at": proposal.sent_at.isoformat() if proposal.sent_at else None,
+    }
+
+
 async def transition(
     session: AsyncSession,
     proposal: Proposal,
@@ -103,13 +155,18 @@ async def transition(
     *,
     actor: str,
     reason: str | None = None,
-    log_category: str | None = None,
+    rejection_reason_code: str | None = None,
+    board_action: str | None = None,
 ) -> Proposal:
     """Erzwingt ALLOWED_TRANSITIONS (Tabelle 4.2) und schreibt genau einen
     unveränderlichen Protokolleintrag je erlaubtem Übergang (Festlegung 4.4.8).
 
     Ein nicht erlaubter Übergang wird abgelehnt: kein Protokolleintrag, der Vorschlag
     bleibt in seinem bisherigen Zustand.
+
+    `log_category` wird nie vom Aufrufer übergeben, sondern aus dem Zielzustand
+    abgeleitet (STATE_TO_LOG_CATEGORY, Entwurf 8.2) -- so kann kein Übergang versehentlich
+    in eine falsche oder in gar keine Kategorie fallen (Testfälle 4/5, HED-46 Abschnitt 8).
     """
     allowed = ALLOWED_TRANSITIONS.get(proposal.state, frozenset())
     if new_state not in allowed:
@@ -119,6 +176,24 @@ async def transition(
 
     from_state = proposal.state
     proposal.state = new_state
+
+    # Z3 "wartet_auf_board" ist der einzige Entscheidungspunkt des Boards (Freigeben,
+    # Ändern, Verwerfen) bzw. des Fristablaufs -- unabhängig davon, ob der Zielzustand
+    # eine der drei Protokollkategorien auslöst (Z7 "freigegeben" tut das nicht).
+    if from_state == STATE_WARTET_AUF_BOARD:
+        proposal.decided_at = utcnow()
+        proposal.decided_by = actor
+
+    log_category = STATE_TO_LOG_CATEGORY.get(new_state)
+    proposal_snapshot = None
+    if log_category is not None:
+        proposal.log_category = log_category
+        proposal.rejection_reason_code = rejection_reason_code
+        proposal.rejection_reason_text = reason
+        if board_action is not None:
+            proposal.board_action = board_action
+        proposal_snapshot = _proposal_snapshot(proposal)
+
     session.add(
         ProposalEvent(
             proposal_id=proposal.id,
@@ -127,6 +202,7 @@ async def transition(
             actor=actor,
             reason=reason,
             log_category=log_category,
+            proposal_snapshot=proposal_snapshot,
         )
     )
     return proposal
@@ -150,7 +226,7 @@ async def board_change(
         "board_geaendert",
         actor=actor,
         reason=reason,
-        log_category="board_decision",
+        board_action="change",
     )
 
     proposal_price = overrides.get("proposal_price", parent.proposal_price)

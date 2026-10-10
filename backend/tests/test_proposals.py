@@ -14,10 +14,14 @@ from sqlalchemy import select
 from app.db import make_engine, make_session_factory
 from app.models import Base, ProposalEvent, Strategy
 from app.models.proposals import (
+    STATE_BOARD_FREIGEGEBEN,
     STATE_BOARD_GEAENDERT,
+    STATE_BOARD_VERWORFEN,
     STATE_ENTSTANDEN,
     STATE_STUFE1_ABGELEHNT,
     STATE_STUFE1_LAEUFT,
+    STATE_STUFE2_ABGELEHNT,
+    STATE_STUFE2_LAEUFT,
     STATE_VERFALLEN,
     STATE_WARTET_AUF_BOARD,
 )
@@ -226,6 +230,179 @@ async def test_board_change_ends_parent_in_z6_and_branches_a_new_z0_record(sessi
     assert len(child_events) == 1
     assert child_events[0].from_state is None
     assert child_events[0].to_state == STATE_ENTSTANDEN
+
+
+# --- HED-46: Vierwertiges Freigabe-Protokoll (Entwurf Abschnitt 8, Testfälle 1-5, 9) ---
+
+
+async def test_stage1_rejection_logs_category_without_stage2_snapshot(session):
+    """Testfall 1: Übergang nach Z2 erzeugt genau einen Eintrag mit
+
+    log_category=stage1_rejection; limit_utilization_stage2 ist null, weil Stufe 2
+    bei einer Stufe-1-Ablehnung nie läuft."""
+    strategy = await make_strategy(session, "S3")
+    proposal = await create_proposal(session, make_signal(strategy.id), mode="paper")
+    proposal.limit_utilization = [{"limit": "summenrisiko", "auslastung_pct": 120}]
+    await transition(
+        session,
+        proposal,
+        STATE_STUFE1_ABGELEHNT,
+        actor="system",
+        reason="Limit gebrochen",
+        rejection_reason_code="summenrisiko_ueberschritten",
+    )
+    await session.commit()
+
+    events = await events_of(session, proposal.id)
+    rejection_event = events[-1]
+    assert rejection_event.log_category == "stage1_rejection"
+    assert rejection_event.proposal_snapshot["limit_utilization_stage2"] is None
+    assert rejection_event.proposal_snapshot["limit_utilization_stage1"] == [
+        {"limit": "summenrisiko", "auslastung_pct": 120}
+    ]
+    assert proposal.log_category == "stage1_rejection"
+    assert proposal.rejection_reason_code == "summenrisiko_ueberschritten"
+
+
+async def test_stage2_rejection_logs_category_with_both_snapshots(session):
+    """Testfall 2: Übergang nach Z9 erzeugt einen Eintrag mit
+
+    log_category=stage2_rejection und beiden Limitauslastungs-Snapshots gesetzt."""
+    strategy = await make_strategy(session, "S3")
+    proposal = await create_proposal(session, make_signal(strategy.id), mode="paper")
+    proposal.limit_utilization = [{"limit": "summenrisiko", "auslastung_pct": 80}]
+    await transition(session, proposal, STATE_STUFE1_LAEUFT, actor="system")
+    await transition(session, proposal, STATE_WARTET_AUF_BOARD, actor="system")
+    await transition(session, proposal, STATE_BOARD_FREIGEGEBEN, actor="board:alice")
+    await transition(session, proposal, STATE_STUFE2_LAEUFT, actor="system")
+    proposal.stage2_limit_utilization = [{"limit": "summenrisiko", "auslastung_pct": 105}]
+    await transition(
+        session,
+        proposal,
+        STATE_STUFE2_ABGELEHNT,
+        actor="system",
+        reason="Kurs zu alt",
+        rejection_reason_code="kursfrische",
+    )
+    await session.commit()
+
+    events = await events_of(session, proposal.id)
+    rejection_event = events[-1]
+    assert rejection_event.log_category == "stage2_rejection"
+    assert rejection_event.proposal_snapshot["limit_utilization_stage1"] == [
+        {"limit": "summenrisiko", "auslastung_pct": 80}
+    ]
+    assert rejection_event.proposal_snapshot["limit_utilization_stage2"] == [
+        {"limit": "summenrisiko", "auslastung_pct": 105}
+    ]
+
+
+async def test_board_decision_targets_log_decided_by_system_frist_or_board(session):
+    """Testfall 3: Übergänge nach Z4, Z5, Z6 erzeugen je einen Eintrag mit
+
+    log_category=board_decision; decided_by ist system_frist bei Z4 (Fristablauf) und
+    board bei Z5 (Verwerfen) / Z6 (Ändern)."""
+    strategy = await make_strategy(session, "S3")
+
+    expired = await create_proposal(session, make_signal(strategy.id, "sig-expire"), mode="paper")
+    await transition(session, expired, STATE_STUFE1_LAEUFT, actor="system")
+    await transition(session, expired, STATE_WARTET_AUF_BOARD, actor="system")
+    await transition(
+        session, expired, STATE_VERFALLEN, actor="system_frist", reason="2h ohne Entscheidung"
+    )
+
+    discarded = await create_proposal(
+        session, make_signal(strategy.id, "sig-discard"), mode="paper"
+    )
+    await transition(session, discarded, STATE_STUFE1_LAEUFT, actor="system")
+    await transition(session, discarded, STATE_WARTET_AUF_BOARD, actor="system")
+    await transition(
+        session,
+        discarded,
+        STATE_BOARD_VERWORFEN,
+        actor="board:alice",
+        reason="Zu riskant",
+        board_action="discard",
+    )
+
+    changed = await create_proposal(session, make_signal(strategy.id, "sig-change"), mode="paper")
+    await transition(session, changed, STATE_STUFE1_LAEUFT, actor="system")
+    await transition(session, changed, STATE_WARTET_AUF_BOARD, actor="system")
+    await board_change(
+        session, changed, actor="board:bob", reason="Größe angepasst", size=Decimal("1")
+    )
+    await session.commit()
+
+    for proposal, expected_decided_by, expected_board_action in (
+        (expired, "system_frist", None),
+        (discarded, "board:alice", "discard"),
+        (changed, "board:bob", "change"),
+    ):
+        assert proposal.log_category == "board_decision"
+        assert proposal.decided_by == expected_decided_by
+        assert proposal.decided_at is not None
+        assert proposal.board_action == expected_board_action
+        events = await events_of(session, proposal.id)
+        assert events[-1].log_category == "board_decision"
+
+
+async def test_no_transition_outside_the_five_target_states_sets_log_category(session):
+    """Testfälle 4/5: nur Übergänge nach Z2/Z9/Z4/Z5/Z6 tragen eine der drei
+
+    Kategorien; jeder dieser fünf Übergänge trägt genau eine, kein anderer Übergang
+    (inkl. Z7 "freigegeben") trägt irgendeine."""
+    strategy = await make_strategy(session, "S3")
+    proposal = await create_proposal(session, make_signal(strategy.id), mode="paper")
+    await transition(session, proposal, STATE_STUFE1_LAEUFT, actor="system")
+    await transition(session, proposal, STATE_WARTET_AUF_BOARD, actor="system")
+    await transition(session, proposal, STATE_BOARD_FREIGEGEBEN, actor="board:alice")
+    await session.commit()
+
+    events = await events_of(session, proposal.id)
+    categorized_targets = {STATE_STUFE1_ABGELEHNT, STATE_STUFE2_ABGELEHNT, STATE_VERFALLEN,
+                           STATE_BOARD_VERWORFEN, STATE_BOARD_GEAENDERT}
+    for event in events:
+        if event.to_state in categorized_targets:
+            assert event.log_category is not None
+        else:
+            assert event.log_category is None
+    # Z7 "freigegeben" ist explizit keine der drei Kategorien (Tabelle 8.2).
+    assert events[-1].to_state == STATE_BOARD_FREIGEGEBEN
+    assert events[-1].log_category is None
+
+
+async def test_correction_creates_new_record_old_stays_unchanged(session):
+    """Testfall 9: eine Korrektur eines bestehenden Eintrags erzeugt einen neuen
+
+    Datensatz mit correction_of_id, der alte bleibt unverändert lesbar."""
+    strategy = await make_strategy(session, "S3")
+    proposal = await create_proposal(session, make_signal(strategy.id), mode="paper")
+    await transition(
+        session, proposal, STATE_STUFE1_ABGELEHNT, actor="system", reason="Limit gebrochen"
+    )
+    await session.commit()
+
+    original = (await events_of(session, proposal.id))[-1]
+    original_reason = original.reason
+
+    correction = ProposalEvent(
+        proposal_id=proposal.id,
+        from_state=original.from_state,
+        to_state=original.to_state,
+        actor="system",
+        reason="Korrektur: falscher Grund-Code gespeichert",
+        log_category=original.log_category,
+        correction_of_id=original.id,
+    )
+    session.add(correction)
+    await session.commit()
+
+    await session.refresh(original)
+    assert original.reason == original_reason
+    assert original.correction_of_id is None
+
+    events = await events_of(session, proposal.id)
+    assert events[-1].correction_of_id == original.id
 
 
 # --- Invariante 4.4.6: strategy_gate_status ist nach Anlage unveränderlich --------------

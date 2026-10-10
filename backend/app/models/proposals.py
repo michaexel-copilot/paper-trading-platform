@@ -49,6 +49,18 @@ ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
 # Terminal states (Z2, Z4, Z5, Z6, Z9, Z11, Z12, Z13) have no entry above, so
 # ALLOWED_TRANSITIONS.get(state, frozenset()) correctly yields no allowed follow-up state.
 
+# HED-46 / Entwurf Abschnitt 8.2: welcher Zielzustand zu welcher der drei
+# Protokollkategorien (i)-(iii) gehört. Jeder andere Zielzustand (inkl. Z7 "freigegeben",
+# das ist keine Ablehnung oder ein Verwerfen) bleibt ohne Kategorie. Kategorie (iv)
+# "strategie_ausstieg" ist kein Proposal-Zustand -- siehe app.models.auto_exit.
+STATE_TO_LOG_CATEGORY: dict[str, str] = {
+    STATE_STUFE1_ABGELEHNT: "stage1_rejection",
+    STATE_STUFE2_ABGELEHNT: "stage2_rejection",
+    STATE_VERFALLEN: "board_decision",
+    STATE_BOARD_VERWORFEN: "board_decision",
+    STATE_BOARD_GEAENDERT: "board_decision",
+}
+
 
 class Proposal(Base):
     __tablename__ = "proposals"
@@ -88,6 +100,10 @@ class Proposal(Base):
     limit_utilization: Mapped[list | None] = mapped_column(JSON)
     stage1_result: Mapped[str | None] = mapped_column(String(10))  # passed | rejected
     stage1_reason: Mapped[str | None] = mapped_column(String(500))
+    # Stufe-2-Kennzahlen: eingefroren bei Z8->Z9/Z10 (HED-44, B-2-Nachprüfung). HED-46
+    # liest dieses Feld nur für das Freigabe-Protokoll (Abschnitt 8.3) -- die Berechnung
+    # und das Befüllen gehört in den Aufgabenbereich von HED-44.
+    stage2_limit_utilization: Mapped[list | None] = mapped_column(JSON)
 
     # Zeitstempel: nullable bis zum jeweiligen Ereignis, danach unveränderlich.
     signal_at: Mapped[datetime] = mapped_column(UtcDateTime)
@@ -138,4 +154,17 @@ class ProposalEvent(Base):
     occurred_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     actor: Mapped[str] = mapped_column(String(100))  # "system" oder Kennung
     reason: Mapped[str | None] = mapped_column(String(500))
-    log_category: Mapped[str | None] = mapped_column(String(30))
+    log_category: Mapped[str | None] = mapped_column(String(30), index=True)
+    # HED-46 / Entwurf 8.3: vollständige Kopie der zu diesem Zeitpunkt eingefrorenen
+    # Proposal-Felder (Handelsinhalt, Stufe-1- und, falls vorhanden, Stufe-2-Kennzahlen,
+    # Dashboard-Felder, relevante Zeitstempel) -- nur gesetzt, wenn log_category nicht
+    # null ist (Zielzustand Z2/Z9/Z4/Z5/Z6). Ein Verweis auf Proposal reicht nicht: eine
+    # spätere Fehlbedienung an der (nur durch Konvention, nicht durch DB-Constraint
+    # unveränderlichen) Proposal-Zeile darf den bereits geschriebenen Protokolleintrag
+    # nicht rückwirkend verändern.
+    proposal_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    # Korrektur eines bestehenden Eintrags (Entwurf 8.5, "nur anfügen"): neuer Datensatz
+    # mit Verweis auf den korrigierten; der alte bleibt unverändert lesbar.
+    correction_of_id: Mapped[int | None] = mapped_column(
+        ForeignKey("proposal_events.id", ondelete="SET NULL")
+    )
