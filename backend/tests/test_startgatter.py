@@ -4,7 +4,12 @@ from sqlalchemy import select
 from app.config import Settings
 from app.main import create_app
 from app.models.installation import InstallationMarker
-from app.startgatter import StartgatterFehler, lese_artefakt_art, pruefe_installation_marker
+from app.startgatter import (
+    StartgatterFehler,
+    lese_artefakt_art,
+    pruefe_installation_marker,
+    pruefe_matcher_fuer_live_artefakt,
+)
 
 
 def test_enforce_startgatter_ist_per_default_aus():
@@ -93,3 +98,47 @@ async def test_app_startet_nicht_ohne_betriebsart_wenn_gatter_an(
     with pytest.raises(BetriebsartFehler):
         async with application.router.lifespan_context(application):
             pass
+
+
+def test_live_artefakt_mit_laufendem_matcher_verweigert_start(monkeypatch):
+    """CRO-Nachforderung HED-42: der Papier-Matcher liegt nicht in app/trading/papier
+    und bleibt deshalb im Live-Artefakt, wenn RUN_MATCHER nicht geprüft wird."""
+    monkeypatch.setenv("ARTEFAKT_ART", "live_artefakt")
+    with pytest.raises(StartgatterFehler):
+        pruefe_matcher_fuer_live_artefakt(run_matcher=True)
+
+
+def test_live_artefakt_ohne_matcher_startet(monkeypatch):
+    monkeypatch.setenv("ARTEFAKT_ART", "live_artefakt")
+    pruefe_matcher_fuer_live_artefakt(run_matcher=False)
+
+
+def test_papier_artefakt_mit_laufendem_matcher_startet(monkeypatch):
+    monkeypatch.setenv("ARTEFAKT_ART", "papier_artefakt")
+    pruefe_matcher_fuer_live_artefakt(run_matcher=True)
+
+
+async def test_app_startet_nicht_mit_matcher_in_live_artefakt(
+    betriebsart, monkeypatch, tmp_path, market
+):
+    """End-to-End: live_artefakt + RUN_MATCHER=true -- der gesamte Prozess (nicht nur
+    die Einzelfunktion) startet nicht, noch bevor die Matcher-Sperrdatei angefasst wird."""
+    betriebsart("live")
+    monkeypatch.setenv("ARTEFAKT_ART", "live_artefakt")
+    monkeypatch.setenv("OKX_LIVE_API_KEY", "live-key")
+    monkeypatch.setenv("OKX_LIVE_API_SECRET", "live-secret")
+    monkeypatch.delenv("OKX_DEMO_API_KEY", raising=False)
+    settings = Settings(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        auto_migrate=True,
+        run_matcher=True,
+        check_assets_on_startup=False,
+        lock_file=str(tmp_path / "backend.lock"),
+        frontend_dist=str(tmp_path / "no-frontend"),
+        enforce_startgatter=True,
+    )
+    application = create_app(settings, market)
+    with pytest.raises(StartgatterFehler):
+        async with application.router.lifespan_context(application):
+            pass
+    assert not (tmp_path / "backend.lock").exists()

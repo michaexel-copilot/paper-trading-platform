@@ -5,12 +5,12 @@ Start vollständig -- kein eingeschränkter Modus, kein Nur-Lese-Modus, keine Wa
 Grund wird protokolliert; die Weiterleitung an den Board-Benachrichtigungskanal ist
 Sache des Betreibers der jeweiligen Installation (Logging-Weiterleitung, kein Code hier).
 
-Die Schlüsseltrennung (Auflage 2) ist bewusst nicht hier verdrahtet: Es gibt noch keine
-Gegenstelle, die ein Schlüssel schützen müsste (B-6 wartet auf das OKX-Demo-Secret).
-``app.schluessel.read_exchange_credential`` führt seine eigene Prüfung bei jedem Aufruf
-selbst aus, sobald ein Aufrufer -- das wird ausschließlich der Versand-Engpass sein --
-tatsächlich einen Schlüssel braucht. Eine generische Installation dieser Plattform ohne
-Gegenstellen-Anbindung hat sonst nichts, was dieses Gatter sinnvoll prüfen könnte.
+Die Schlüsseltrennung (Auflage 2) wird nicht hier, sondern in
+``app.schluessel.pruefe_schluesseltrennung_beim_start`` geprüft (eigenes Modul, weil sie
+ohne Datenbank-Session auskommt) -- ``app.main`` ruft beide im selben Startgatter-Block
+auf, hinter demselben ``enforce_startgatter``-Schalter. CRO-Nachforderung HED-42: die
+reine Aufruf-bei-Versand-Prüfung in ``read_exchange_credential`` reichte nicht, weil eine
+Installation ohne jeden Versand sie sonst nie ausgeführt hätte.
 """
 
 import logging
@@ -82,4 +82,20 @@ async def pruefe_installation_marker(session: AsyncSession) -> None:
         raise StartgatterFehler(
             f"Datenbank ist mit Artefakt {marker.artefakt_art!r} markiert, Prozess läuft "
             f"als {artefakt_art!r}. Start verweigert (Auflage 4, Startgatter 3)."
+        )
+
+
+def pruefe_matcher_fuer_live_artefakt(run_matcher: bool) -> None:
+    """Auflage 4, Startgatter 4 (CRO-Nachforderung HED-42): der Papier-Simulations-
+    Matcher (``app.trading.matcher``, füllt Orders gegen simulierte Kurse) liegt nicht
+    in ``app/trading/papier`` und wird deshalb von ``scripts/build_checks.py`` nicht aus
+    dem Live-Artefakt entfernt. ``RUN_MATCHER`` ist ein eigener, von ARTEFAKT_ART
+    unabhängiger Schalter (Default an) -- ohne diese Prüfung liefe der Papier-Matcher in
+    einem Live-Artefakt unbemerkt parallel zum echten Orderpfad. Start verweigert, kein
+    eingeschränkter Modus."""
+    if lese_artefakt_art() == "live_artefakt" and run_matcher:
+        raise StartgatterFehler(
+            "RUN_MATCHER ist in einem Live-Artefakt gesetzt. Der Papier-Simulations-"
+            "Matcher würde parallel zum echten Orderpfad laufen. Start verweigert "
+            "(Auflage 4, Startgatter 4)."
         )

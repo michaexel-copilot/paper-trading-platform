@@ -15,7 +15,8 @@ from app.marketdata.ccxt_adapter import CcxtSource
 from app.marketdata.router import SourceRouter
 from app.marketdata.service import MarketService
 from app.marketdata.yahoo_adapter import YahooSource
-from app.startgatter import pruefe_installation_marker
+from app.schluessel import pruefe_schluesseltrennung_beim_start
+from app.startgatter import pruefe_installation_marker, pruefe_matcher_fuer_live_artefakt
 from app.trading.matcher import Matcher, ProcessLock
 
 log = logging.getLogger(__name__)
@@ -57,6 +58,12 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if settings.enforce_startgatter:
+            # Beide Prüfungen brauchen keine Datenbank-Session und laufen deshalb vor
+            # jeder anderen Startarbeit -- so früh wie technisch möglich abgelehnt
+            # (Auflage 2 Startgatter, Auflage 4 Startgatter 4, CRO-Nachforderung HED-42).
+            pruefe_matcher_fuer_live_artefakt(settings.run_matcher)
+            pruefe_schluesseltrennung_beim_start()
         lock = ProcessLock(settings.lock_file)
         if settings.run_matcher:
             lock.acquire()

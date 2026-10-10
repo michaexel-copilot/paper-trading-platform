@@ -79,6 +79,30 @@ def read_exchange_credential(exchange: str) -> ExchangeCredential:
     )
 
 
+def _gefundene_boersen() -> set[str]:
+    """Jede Börse, für die überhaupt ein Schlüssel (gleich welcher Betriebsart) in der
+    Umgebung lesbar ist -- unabhängig davon, ob diese Installation die Börse heute
+    schon über den Versand-Engpass anspricht."""
+    boersen = set()
+    for name in os.environ:
+        for tag in _TAG.values():
+            suffix = f"_{tag}_API_KEY"
+            if name.endswith(suffix):
+                boersen.add(name[: -len(suffix)].lower())
+    return boersen
+
+
+def pruefe_schluesseltrennung_beim_start() -> None:
+    """Start-Selbsttest (Auflage 2, Startgatter): die Querkontaminationsprüfung aus
+    ``read_exchange_credential`` lief bisher nur beim ersten Versand -- also gar nicht,
+    solange keine Order abgesetzt wird. Diese Funktion führt sie für jede Börse, deren
+    Schlüssel überhaupt lesbar ist, bereits beim Prozessstart aus, damit ein auf dem
+    falschen Host sichtbarer Schlüssel den Start verhindert statt erst den ersten
+    Versand. Sofort-Stopp-Fall, kein eingeschränkter Start."""
+    for boerse in _gefundene_boersen():
+        read_exchange_credential(boerse)
+
+
 def verifiziere_kontostand(credential: ExchangeCredential, exchange_client) -> bool:
     """Reiner Lesevorgang gegen die Gegenstelle (Selbsttest Punkt 4, Abschnitt 3.2).
 
