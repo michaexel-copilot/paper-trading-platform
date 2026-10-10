@@ -7,6 +7,7 @@ from app.models.installation import InstallationMarker
 from app.models.orders import Order, Trade
 from app.models.portfolios import Portfolio, PortfolioAsset, Position, ValueSnapshot
 from app.models.proposals import Proposal, ProposalEvent
+from app.models.slippage import SlippageMessungEintrag
 from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen, StrategieSperrkennzeichen
 from app.models.strategies import Strategy
 from app.models.versandengpass import VersandEngpassEintrag
@@ -27,6 +28,7 @@ __all__ = [
     "Position",
     "Proposal",
     "ProposalEvent",
+    "SlippageMessungEintrag",
     "Strategy",
     "StrategieSperrkennzeichen",
     "Trade",
