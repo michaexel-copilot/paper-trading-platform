@@ -18,6 +18,7 @@ from app.marketdata.yahoo_adapter import YahooSource
 from app.schluessel import pruefe_schluesseltrennung_beim_start
 from app.startgatter import pruefe_installation_marker, pruefe_matcher_fuer_live_artefakt
 from app.trading.matcher import Matcher, ProcessLock
+from app.trading.proposals import FRISTWAECHTER_INTERVAL_SECONDS, verfalle_ueberfaellige_vorschlaege
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +52,18 @@ async def _check_assets_daily(session_factory, market_service: MarketService) ->
         except Exception:
             log.exception("asset availability check failed")
         await asyncio.sleep(ASSET_CHECK_INTERVAL_SECONDS)
+
+
+async def _expire_overdue_proposals_loop(session_factory) -> None:
+    """Fristwächter-Schleife (HED-45, Entwurf 7.1). ``verfalle_ueberfaellige_vorschlaege``
+    fängt Fehler je Vorschlag bereits selbst ab; dieses try/except ist nur gegen einen
+    unerwarteten Fehler im Sweep selbst (z. B. DB-Verbindung weg)."""
+    while True:
+        try:
+            await verfalle_ueberfaellige_vorschlaege(session_factory)
+        except Exception:
+            log.exception("Vorschlag-Fristwächter fehlgeschlagen")
+        await asyncio.sleep(FRISTWAECHTER_INTERVAL_SECONDS)
 
 
 def create_app(settings: Settings | None = None, market_service: MarketService | None = None):
@@ -100,6 +113,8 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
         background = []
         if settings.check_assets_on_startup:
             background.append(asyncio.create_task(_check_assets_daily(session_factory, service)))
+        if settings.check_proposal_expiry_on_startup:
+            background.append(asyncio.create_task(_expire_overdue_proposals_loop(session_factory)))
         if settings.run_matcher:
             matcher.start()
         try:
