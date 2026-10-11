@@ -18,6 +18,7 @@ def _basiskontext(**overrides) -> RisikoKontext:
         tranche="B1",
         tranche_eur=D(2000),
         nav=D(10000),
+        direction="long",
         nav_hoechststand=D(10000),
         nav_tagesanfang=D(10000),
         nav_vor_7_tagen=D(10000),
@@ -56,8 +57,9 @@ def test_vollstaendig_konformer_kontext_bricht_trotzdem_am_ersten_nicht_verdraht
     gebrochene = [e.limit for e in ergebnisse if e.gebrochen]
     berechnete_namen = {
         "risiko_je_trade", "positionsgroesse_rechenweg", "einzelwert_obergrenze_krypto",
-        "brutto_exposure", "summenrisiko", "drawdown_vom_hoechststand", "tagesverlust",
-        "verlust_7_tage", "kalendermonatsverlust", "harte_kapitalgrenze",
+        "brutto_exposure", "hebel", "short_verbot", "summenrisiko",
+        "drawdown_vom_hoechststand", "tagesverlust", "verlust_7_tage",
+        "kalendermonatsverlust", "harte_kapitalgrenze",
         "korrelierte_gruppe", "offene_positionen_zahl",
     }
     for name in berechnete_namen:
@@ -161,4 +163,40 @@ def test_offene_positionen_zahl_ueber_b1_grenze_vier_ist_gebrochen():
 def test_offene_positionen_zahl_an_b1_grenze_vier_besteht():
     ctx = _basiskontext(tranche="B1", anzahl_offener_positionen=4)
     ergebnis = _ergebnis(pruefe_alle_limits(ctx), "offene_positionen_zahl")
+    assert ergebnis.gebrochen is False
+
+
+# --- Hebel und Short-Verbot, HED-8 Abschnitt 4.5 (CRO-Nachforderung aus HED-61) -----------
+
+
+def test_hebel_ueber_nav_ist_gebrochen():
+    ctx = _basiskontext(nav=D(10000), brutto_exposure=D(10001))
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "hebel")
+    assert ergebnis.berechenbar is True
+    assert ergebnis.gebrochen is True
+
+
+def test_hebel_an_nav_besteht():
+    ctx = _basiskontext(nav=D(10000), brutto_exposure=D(10000))
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "hebel")
+    assert ergebnis.gebrochen is False
+
+
+def test_hebel_nicht_berechenbar_ohne_kurs():
+    ctx = _basiskontext(brutto_exposure=None)
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "hebel")
+    assert ergebnis.berechenbar is False
+    assert ergebnis.gebrochen is True  # Festlegung 6.1.3
+
+
+def test_short_ist_gebrochen():
+    ctx = _basiskontext(direction="short")
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "short_verbot")
+    assert ergebnis.berechenbar is True
+    assert ergebnis.gebrochen is True
+
+
+def test_long_besteht_short_verbot():
+    ctx = _basiskontext(direction="long")
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "short_verbot")
     assert ergebnis.gebrochen is False

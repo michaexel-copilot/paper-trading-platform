@@ -208,6 +208,7 @@ async def sammle_kontext(
         tranche=tranche,
         tranche_eur=tranche_eur,
         nav=nav,
+        direction=eingabe.direction,
         nav_hoechststand=nav_hoechststand,
         nav_tagesanfang=nav_tagesanfang,
         nav_vor_7_tagen=nav_vor_7_tagen,

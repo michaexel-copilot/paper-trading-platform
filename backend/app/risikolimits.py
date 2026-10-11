@@ -94,6 +94,7 @@ class RisikoKontext:
     tranche: str
     tranche_eur: Decimal
     nav: Decimal
+    direction: str  # long | short -- HED-8 Abschnitt 4.5, Short-Verbot
     nav_hoechststand: Decimal | None
     nav_tagesanfang: Decimal | None
     nav_vor_7_tagen: Decimal | None
@@ -154,6 +155,25 @@ def _brutto_exposure(ctx: RisikoKontext) -> LimitErgebnis:
     return _schwelle(
         "brutto_exposure", ctx.brutto_exposure, ctx.tranche_eur,
         "Brutto-Exposure <= freigegebene Tranche, HED-8 Tabelle 4.1",
+    )
+
+
+def _hebel(ctx: RisikoKontext) -> LimitErgebnis:
+    if ctx.brutto_exposure is None:
+        return _nicht_berechenbar("hebel", "Kurs/FX für das Instrument nicht lesbar")
+    return _schwelle(
+        "hebel", ctx.brutto_exposure, ctx.nav,
+        "Brutto-Exposure / NAV <= 1,0 bis Gate C, HED-8 Abschnitt 4.5",
+    )
+
+
+def _short_verbot(ctx: RisikoKontext) -> LimitErgebnis:
+    gebrochen = ctx.direction == "short"
+    return LimitErgebnis(
+        "short_verbot", berechenbar=True, gebrochen=gebrochen,
+        auslastung_pct=HUNDERT if gebrochen else Decimal(0),
+        begruendung="Short verboten bis Gate C, HED-8 Abschnitt 4.5 (Paper-Plattform kann "
+        "es nicht testen)",
     )
 
 
@@ -348,6 +368,8 @@ _BERECHNETE_PRUEFUNGEN = (
     _positionsgroesse_rechenweg,
     _einzelwert_obergrenze_krypto,
     _brutto_exposure,
+    _hebel,
+    _short_verbot,
     _summenrisiko,
     _drawdown_vom_hoechststand,
     _tagesverlust,
