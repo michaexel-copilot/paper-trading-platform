@@ -82,7 +82,29 @@ def settings(tmp_path, template_db) -> Settings:
         check_assets_on_startup=False,
         lock_file=str(tmp_path / "backend.lock"),
         frontend_dist=str(tmp_path / "no-frontend"),
+        # Most tests exercise behaviour unrelated to HED-42's platform separation and
+        # don't set BETRIEBSART/ARTEFAKT_ART; tests/test_startgatter.py turns this
+        # back on explicitly to test the gate itself.
+        enforce_startgatter=False,
     )
+
+
+@pytest.fixture
+def betriebsart(monkeypatch):
+    """Set BETRIEBSART for the duration of a test and clear the process-wide cache.
+
+    ``app.betriebsart.get_betriebsart`` is ``lru_cache``-d on purpose (Auflage 1: read
+    once, never again) -- tests that exercise more than one betriebsart must clear it
+    themselves between reads, which is what this fixture does on teardown too.
+    """
+    from app.betriebsart import get_betriebsart
+
+    def _set(wert: str) -> None:
+        monkeypatch.setenv("BETRIEBSART", wert)
+        get_betriebsart.cache_clear()
+
+    yield _set
+    get_betriebsart.cache_clear()
 
 
 @pytest.fixture

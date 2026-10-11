@@ -17,6 +17,15 @@ services:
     environment:
       COOKIE_SECURE: "true"
       # CHAIN_CRYPTO: okx
+      # Platform-separation gate (Auflage 1/2, HED-36 Abschnitt 3). Empty/false by
+      # default so existing non-Hedgeclip deployments of this compose file are
+      # unaffected. Hedgeclip deployments MUST set both in .env -- see
+      # deploy/hedgeclip.env.example for why an unset gate is the company's named top
+      # risk, not a cosmetic default. ARTEFAKT_ART is not set here: the image already
+      # bakes it in at build time (Dockerfile ARG ARTEFAKT_ART) and an empty override
+      # here would defeat the Auflage-4 build-time removal of app/trading/papier.
+      ENFORCE_STARTGATTER: ${ENFORCE_STARTGATTER:-false}
+      BETRIEBSART: ${BETRIEBSART:-}
     volumes:
       - paper-trading-data:/data
     labels:

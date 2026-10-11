@@ -9,13 +9,20 @@
 #   sudo deploy/install.sh --ref v1.0
 #
 # Options:
-#   --ref <ref>    Branch, tag or commit to deploy (default: main)
-#   --host <addr>  Address to listen on (default: 0.0.0.0, all interfaces)
-#   --port <n>     Port to listen on (default: 8000)
-#   -h, --help     Show this help
+#   --ref <ref>           Branch, tag or commit to deploy (default: main)
+#   --host <addr>         Address to listen on (default: 0.0.0.0, all interfaces)
+#   --port <n>             Port to listen on (default: 8000)
+#   --env-template <path>  Env file to seed from, relative to the repo root
+#                          (default: deploy/paper-trading.env.example). Hedgeclip
+#                          installations MUST pass --env-template deploy/hedgeclip.env.example
+#                          -- see that file for why (Auflage 1/2/4, HED-36 Abschnitt 3).
+#   -h, --help             Show this help
 #
 # --host and --port only apply to a first installation. Afterwards the listen
 # address is set in /etc/paper-trading/paper-trading.env.
+#
+# --env-template only applies to a first installation too: once the settings file
+# exists, "Keeping the existing ..." below leaves it untouched on every upgrade.
 #
 # Running the installer again upgrades in place and keeps the data and that file.
 # See docs/deployment.md.
@@ -33,18 +40,23 @@ HEALTH_TIMEOUT=60
 REF=main
 HOST=
 PORT=
+ENV_TEMPLATE=
 STEP="reading the options"
 
 usage() {
     cat <<'EOF'
 Install or upgrade the paper trading platform on Debian or Ubuntu.
 
-Usage: install.sh [--ref <ref>] [--host <addr>] [--port <n>]
+Usage: install.sh [--ref <ref>] [--host <addr>] [--port <n>] [--env-template <path>]
 
-  --ref <ref>    Branch, tag or commit to deploy (default: main)
-  --host <addr>  Address to listen on (default: 0.0.0.0, all interfaces)
-  --port <n>     Port to listen on (default: 8000)
-  -h, --help     Show this help
+  --ref <ref>           Branch, tag or commit to deploy (default: main)
+  --host <addr>         Address to listen on (default: 0.0.0.0, all interfaces)
+  --port <n>            Port to listen on (default: 8000)
+  --env-template <path> Env file to seed from, relative to the repo root
+                        (default: deploy/paper-trading.env.example). Hedgeclip
+                        installations MUST pass
+                        --env-template deploy/hedgeclip.env.example.
+  -h, --help            Show this help
 
 --host and --port only apply to a first installation. Afterwards the listen
 address is set in /etc/paper-trading/paper-trading.env.
@@ -71,12 +83,13 @@ on_exit() {
 parse_options() {
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --ref | --host | --port)
+            --ref | --host | --port | --env-template)
                 [[ $# -ge 2 ]] || die "$1 needs a value"
                 case $1 in
                     --ref) REF=$2 ;;
                     --host) HOST=$2 ;;
                     --port) PORT=$2 ;;
+                    --env-template) ENV_TEMPLATE=$2 ;;
                 esac
                 shift 2
                 ;;
@@ -193,17 +206,20 @@ write_env_file() {
     install -d -m 0755 "$(dirname "$ENV_FILE")"
     if [[ -e $ENV_FILE ]]; then
         echo "Keeping the existing $ENV_FILE."
-        if [[ -n $HOST || -n $PORT ]]; then
-            echo "--host and --port were ignored: edit APP_HOST and APP_PORT in that file instead."
+        if [[ -n $HOST || -n $PORT || -n $ENV_TEMPLATE ]]; then
+            echo "--host, --port and --env-template were ignored: this is an upgrade, not a first install."
         fi
         return
     fi
+    local template=${ENV_TEMPLATE:-deploy/$SERVICE.env.example}
+    local template_path="$REPO_DIR/$template"
+    [[ -f $template_path ]] || die "--env-template $template not found in the checked-out repo"
     # Create it with its final permissions before any content goes in.
     install -m 0640 -o root -g "$SERVICE_USER" /dev/null "$ENV_FILE"
     sed -e "s|^APP_HOST=.*|APP_HOST=${HOST:-0.0.0.0}|" \
         -e "s|^APP_PORT=.*|APP_PORT=${PORT:-8000}|" \
-        "$REPO_DIR/deploy/$SERVICE.env.example" >"$ENV_FILE"
-    echo "Wrote $ENV_FILE."
+        "$template_path" >"$ENV_FILE"
+    echo "Wrote $ENV_FILE from $template."
 }
 
 install_unit() {

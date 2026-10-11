@@ -137,6 +137,23 @@ The remaining settings (`CHAIN_*`, `AUTO_MIGRATE`, `RUN_MATCHER`,
 `CHECK_ASSETS_ON_STARTUP`) are in the file as comments showing their defaults. The
 [README](../README.md#settings) explains them.
 
+### Hedgeclip installations
+
+Every Hedgeclip installation (paper and, later, live -- always a separate host, a
+separate database, never the same process) installs with `--env-template` instead of
+the plain command above, so the platform-separation gate (`ENFORCE_STARTGATTER`,
+`BETRIEBSART`, `ARTEFAKT_ART`) is on from the first start, not an opt-in step someone
+can forget:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/michaexel-copilot/paper-trading-platform/main/deploy/install.sh \
+  | sudo bash -s -- --env-template deploy/hedgeclip.env.example
+```
+
+See [`deploy/hedgeclip.env.example`](../deploy/hedgeclip.env.example) for what that
+changes and why. `--env-template` only applies to a first install; an existing settings
+file is kept as-is on upgrade, same as `--host`/`--port`.
+
 If you point `DATABASE_URL` or `LOCK_FILE` at another directory, the service cannot
 write there until you allow it. Run `sudo systemctl edit paper-trading` and add:
 
