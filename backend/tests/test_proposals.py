@@ -25,6 +25,9 @@ from app.models.proposals import (
     STATE_VERFALLEN,
     STATE_WARTET_AUF_BOARD,
 )
+from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen, StrategieSperrkennzeichen
+from app.models.vorschlag_unterdrueckung import VorschlagUnterdrueckt
+from app.sperrkennzeichen import ist_firmenweit_gesperrt, ist_strategie_gesperrt
 from app.trading.proposals import (
     InvalidTransition,
     Signal,
@@ -46,6 +49,16 @@ async def session(tmp_path):
     async with make_session_factory(engine)() as db:
         yield db
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+async def offenes_firmenweites_kennzeichen(session):
+    """Normalzustand einer laufenden Installation (Konvention aus
+    test_versandengpass.py ``mit_schluessel``): das firmenweite Kennzeichen existiert
+    und ist offen. Der fail-closed-Fall ohne Zeile ist test_sperrkennzeichen.py Sache,
+    nicht hier je Testfall erneut zu beweisen -- siehe HED-47, Doppelprüfung vor Z0."""
+    session.add(FirmenweitesSperrkennzeichen(gesetzt=False))
+    await session.flush()
 
 
 async def make_strategy(session, gate_status: str) -> Strategy:
@@ -415,3 +428,65 @@ async def test_strategy_gate_status_cannot_be_mutated_after_creation(session):
 
     with pytest.raises(ValueError, match="unveränderlich"):
         proposal.strategy_gate_status = "S2"
+
+
+# --- Doppelprüfung der Sperrkennzeichen vor Z0 (HED-47, Entwurf 9.2/9.4, B-15 Pfade 1/4) --
+
+
+async def test_firmenweites_kennzeichen_gesetzt_unterdrueckt_vorschlagserstellung(session):
+    zeile = await session.scalar(select(FirmenweitesSperrkennzeichen))
+    zeile.gesetzt = True
+    strategy = await make_strategy(session, "S3")
+
+    result = await create_proposal(session, make_signal(strategy.id), mode="paper")
+    await session.commit()
+
+    assert result is None
+    unterdrueckt = (await session.scalars(select(VorschlagUnterdrueckt))).one()
+    assert unterdrueckt.strategy_id == strategy.id
+    assert unterdrueckt.grund == "firmenweites_kennzeichen_gesetzt"
+
+
+async def test_strategie_kennzeichen_gesetzt_unterdrueckt_nur_diese_strategie(session):
+    strategy_a = await make_strategy(session, "S3")
+    strategy_b = await make_strategy(session, "S3")
+    session.add(
+        StrategieSperrkennzeichen(strategie_schluessel=str(strategy_a.id), gesetzt=True)
+    )
+    await session.flush()
+
+    blockiert = await create_proposal(
+        session, make_signal(strategy_a.id, signal_id="sig-a"), mode="paper"
+    )
+    frei = await create_proposal(
+        session, make_signal(strategy_b.id, signal_id="sig-b"), mode="paper"
+    )
+    await session.commit()
+
+    assert blockiert is None
+    assert frei is not None
+    unterdrueckt = (await session.scalars(select(VorschlagUnterdrueckt))).one()
+    assert unterdrueckt.strategy_id == strategy_a.id
+    assert unterdrueckt.grund == "strategie_kennzeichen_gesetzt"
+
+
+async def test_neue_strategie_waehrend_firmenweiter_sperre_bleibt_blockiert(session):
+    """B-15 Testpfad 4 (Lückenfall, CRO-Entscheidung): eine erst nach dem firmenweiten
+    Handelsstopp angelegte Strategie hat kein eigenes Sperrkennzeichen -- offen per
+    Lückenfall -- und bleibt trotzdem blockiert, weil das firmenweite Kennzeichen
+    zuerst gelesen wird und übersteuert (Entwurf 9.2 Festlegung 1, 9.4)."""
+    zeile = await session.scalar(select(FirmenweitesSperrkennzeichen))
+    zeile.gesetzt = True
+    await session.flush()
+
+    s_neu = await make_strategy(session, "S3")
+    assert await ist_strategie_gesperrt(session, str(s_neu.id)) is False
+
+    result = await create_proposal(session, make_signal(s_neu.id), mode="paper")
+    await session.commit()
+
+    assert result is None
+    unterdrueckt = (await session.scalars(select(VorschlagUnterdrueckt))).one()
+    assert unterdrueckt.grund == "firmenweites_kennzeichen_gesetzt"
+    # Die Neuanlage hat die firmenweite Sperre nicht aufgehoben.
+    assert await ist_firmenweit_gesperrt(session) is True

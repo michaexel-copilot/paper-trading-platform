@@ -25,6 +25,7 @@ from app.models.proposals import (
     STATE_WARTET_AUF_BOARD,
     Proposal,
 )
+from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen
 from app.slippage import (
     MessungNichtMoeglich,
     berechne_fuellquote,
@@ -35,6 +36,15 @@ from app.slippage import (
 from app.trading.proposals import Signal, create_proposal, transition
 
 SIGNAL_AT = datetime(2026, 10, 10, 12, 0, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+async def offenes_firmenweites_kennzeichen(session):
+    """Normalzustand einer laufenden Installation (siehe test_proposals.py): das
+    firmenweite Kennzeichen existiert und ist offen, damit ``create_proposal`` hier
+    nicht an der HED-47-Doppelprüfung scheitert, die dieses Modul nicht testet."""
+    session.add(FirmenweitesSperrkennzeichen(gesetzt=False))
+    await session.flush()
 
 
 async def _strategy(session, gate_status: str = "S3") -> Strategy:
