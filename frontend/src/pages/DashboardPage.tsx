@@ -14,12 +14,32 @@ import { formatAge, formatDateTime, formatNumber, formatPrice, formatRate } from
  * ein Lesefehler würde serverseitig schon fail-closed als 'gesetzt' zurückkommen. */
 function LockBadges({ proposal }: { proposal: Proposal }) {
   const { firmenweit_gesperrt, strategie_gesperrt } = proposal.lock_state
-  if (!firmenweit_gesperrt && !strategie_gesperrt) return null
+  if (!firmenweit_gesperrt && !strategie_gesperrt) {
+    return <span className="badge filled">offen</span>
+  }
   return (
     <>
       {firmenweit_gesperrt && <span className="badge rejected">firmenweit gesperrt</span>}
       {strategie_gesperrt && <span className="badge rejected">Strategie gesperrt</span>}
     </>
+  )
+}
+
+const PROPOSAL_KIND_LABEL: Record<string, string> = {
+  entry: 'Einstieg',
+  increase: 'Erhöhung',
+}
+
+/** Feld 14 (Entwurf 5.1): macht eine geänderte Fassung als solche erkennbar. */
+function ChangeHistory({ proposal }: { proposal: Proposal }) {
+  if (proposal.change_generation === 0 && proposal.parent_proposal_id === null) {
+    return <span>Erstfassung</span>
+  }
+  return (
+    <span>
+      Änderung Nr. {proposal.change_generation}
+      {proposal.parent_proposal_id !== null && ` (Vorgänger: #${proposal.parent_proposal_id})`}
+    </span>
   )
 }
 
@@ -61,9 +81,36 @@ function Stage1Table({ proposal }: { proposal: Proposal }) {
       <dt>Risiko je Trade</dt>
       <dd>{proposal.risk_eur ? `${formatNumber(proposal.risk_eur, 2, 2)} EUR` : '–'}</dd>
       <dt>Korrelation zu offenen Positionen</dt>
-      <dd>{proposal.correlation_to_open_positions ?? '–'}</dd>
+      <dd>
+        {proposal.correlation_to_open_positions ?? '–'}
+        <p className="muted">
+          Liste der Positionen mit dem höchsten Beitrag: noch nicht verfügbar. Offene Abhängigkeit
+          zu HED-44 (Stufe-1-Berechnung liefert bisher nur die Kennzahl, keine Aufschlüsselung je
+          Position).
+        </p>
+      </dd>
       <dt>Kursalter</dt>
       <dd>{formatAge(proposal.price_age_seconds ?? null)}</dd>
+      <dt>Strategie</dt>
+      <dd>Strategie #{proposal.strategy_id}</dd>
+      <dt>Vorschlagsart</dt>
+      <dd>{PROPOSAL_KIND_LABEL[proposal.proposal_kind] ?? proposal.proposal_kind}</dd>
+      <dt>Stop-Abstand</dt>
+      <dd>
+        {formatNumber(proposal.stop_distance, 8, 2)} ({formatRate(proposal.stop_distance_pct)})
+      </dd>
+      <dt>Preisband-Breite / Grenzpreis</dt>
+      <dd>
+        {proposal.limit_price !== null ? (
+          formatPrice(proposal.limit_price)
+        ) : (
+          <span className="muted">noch nicht verfügbar, folgt mit HED-44</span>
+        )}
+      </dd>
+      <dt>Änderungshistorie</dt>
+      <dd>
+        <ChangeHistory proposal={proposal} />
+      </dd>
       {rows && rows.length > 0 && (
         <>
           <dt>Limittabelle</dt>
@@ -74,16 +121,31 @@ function Stage1Table({ proposal }: { proposal: Proposal }) {
                   <th>Kennzahl</th>
                   <th className="num">Wert</th>
                   <th className="num">Grenze</th>
+                  <th className="num">Auslastung</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, i) => (
-                  <tr key={row.name ?? i}>
-                    <td>{row.name ?? '–'}</td>
-                    <td className="num">{row.value ?? '–'}</td>
-                    <td className="num">{row.limit ?? '–'}</td>
-                  </tr>
-                ))}
+                {rows.map((row, i) => {
+                  const value = Number(row.value)
+                  const limit = Number(row.limit)
+                  const derivedUtilization =
+                    row.utilization ??
+                    (row.value !== undefined &&
+                    row.limit !== undefined &&
+                    Number.isFinite(value) &&
+                    Number.isFinite(limit) &&
+                    limit !== 0
+                      ? `${((value / limit) * 100).toFixed(2)} %`
+                      : undefined)
+                  return (
+                    <tr key={row.name ?? i}>
+                      <td>{row.name ?? '–'}</td>
+                      <td className="num">{row.value ?? '–'}</td>
+                      <td className="num">{row.limit ?? '–'}</td>
+                      <td className="num">{derivedUtilization ?? '–'}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </dd>
