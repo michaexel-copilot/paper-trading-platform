@@ -480,6 +480,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/dashboard/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Proposals */
+        get: operations["list_proposals_api_dashboard_proposals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dashboard/proposals/{proposal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Proposal */
+        get: operations["get_proposal_api_dashboard_proposals__proposal_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dashboard/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Dashboard Status */
+        get: operations["dashboard_status_api_dashboard_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dashboard/proposals/{proposal_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve Proposal */
+        post: operations["approve_proposal_api_dashboard_proposals__proposal_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dashboard/proposals/{proposal_id}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discard Proposal */
+        post: operations["discard_proposal_api_dashboard_proposals__proposal_id__discard_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dashboard/proposals/{proposal_id}/change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change Proposal */
+        post: operations["change_proposal_api_dashboard_proposals__proposal_id__change_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -490,6 +592,14 @@ export interface components {
             source: string;
             /** Symbol */
             symbol: string;
+        };
+        /** ApproveIn */
+        ApproveIn: {
+            /**
+             * Confirm
+             * @description Muss true sein -- expliziter Bestätigungsschritt.
+             */
+            confirm: boolean;
         };
         /** AssetClassOut */
         AssetClassOut: {
@@ -543,6 +653,17 @@ export interface components {
             /** Volume */
             volume: string | null;
         };
+        /** ChangeIn */
+        ChangeIn: {
+            /** Reason */
+            reason: string;
+            /** Size */
+            size?: number | string | null;
+            /** Proposal Price */
+            proposal_price?: number | string | null;
+            /** Stop Price */
+            stop_price?: number | string | null;
+        };
         /** Credentials */
         Credentials: {
             /**
@@ -552,6 +673,18 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+        };
+        /** DashboardStatusOut */
+        DashboardStatusOut: {
+            /** Queue Length */
+            queue_length: number;
+            /** Notifications Failing */
+            notifications_failing: number;
+        };
+        /** DiscardIn */
+        DiscardIn: {
+            /** Reason */
+            reason?: string | null;
         };
         /** ExchangeRateOut */
         ExchangeRateOut: {
@@ -628,6 +761,13 @@ export interface components {
             source: string | null;
             /** Bars */
             bars: components["schemas"]["BarOut"][];
+        };
+        /** LockStateOut */
+        LockStateOut: {
+            /** Firmenweit Gesperrt */
+            firmenweit_gesperrt: boolean;
+            /** Strategie Gesperrt */
+            strategie_gesperrt: boolean;
         };
         /** MarketStatusOut */
         MarketStatusOut: {
@@ -864,6 +1004,71 @@ export interface components {
             quote_observed_at: string | null;
             /** Available Cash */
             available_cash: string;
+        };
+        /** ProposalOut */
+        ProposalOut: {
+            /** Id */
+            id: number;
+            /** State */
+            state: string;
+            /** Mode */
+            mode: string;
+            /** Strategy Id */
+            strategy_id: number;
+            /** Signal Id */
+            signal_id: string;
+            /** Parent Proposal Id */
+            parent_proposal_id: number | null;
+            /** Change Generation */
+            change_generation: number;
+            /** Instrument */
+            instrument: string;
+            /** Direction */
+            direction: string;
+            /** Size */
+            size: string;
+            /** Proposal Price */
+            proposal_price: string;
+            /** Stop Price */
+            stop_price: string;
+            /** Stop Distance */
+            stop_distance: string;
+            /** Stop Distance Pct */
+            stop_distance_pct: string;
+            /** Proposal Kind */
+            proposal_kind: string;
+            /** Limit Price */
+            limit_price: string | null;
+            /** Nav */
+            nav: string | null;
+            /** Drawdown */
+            drawdown: string | null;
+            /** Aggregate Risk Utilization Before */
+            aggregate_risk_utilization_before: string | null;
+            /** Aggregate Risk Utilization After */
+            aggregate_risk_utilization_after: string | null;
+            /** Risk Eur */
+            risk_eur: string | null;
+            /** Correlation To Open Positions */
+            correlation_to_open_positions: string | null;
+            /** Price Age Seconds */
+            price_age_seconds: number | null;
+            /** Limit Utilization */
+            limit_utilization: unknown[] | null;
+            /** Stage1 Result */
+            stage1_result: string | null;
+            /**
+             * Signal At
+             * Format: date-time
+             */
+            signal_at: string;
+            /** Displayed At */
+            displayed_at: string | null;
+            /** Expires At */
+            expires_at: string | null;
+            /** Remaining Seconds */
+            remaining_seconds: number | null;
+            lock_state: components["schemas"]["LockStateOut"];
         };
         /** QuoteOut */
         QuoteOut: {
@@ -1994,6 +2199,182 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TradeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_proposals_api_dashboard_proposals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalOut"][];
+                };
+            };
+        };
+    };
+    get_proposal_api_dashboard_proposals__proposal_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dashboard_status_api_dashboard_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardStatusOut"];
+                };
+            };
+        };
+    };
+    approve_proposal_api_dashboard_proposals__proposal_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discard_proposal_api_dashboard_proposals__proposal_id__discard_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscardIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_proposal_api_dashboard_proposals__proposal_id__change_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalOut"];
                 };
             };
             /** @description Validation Error */

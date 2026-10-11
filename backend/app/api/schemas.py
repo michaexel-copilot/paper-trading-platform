@@ -314,6 +314,77 @@ class OrderOut(Out):
     trade_id: int | None = None
 
 
+# --- dashboard (HED-43, Entwurf Abschnitt 5) ---------------------------------
+
+
+class LockStateOut(BaseModel):
+    firmenweit_gesperrt: bool
+    strategie_gesperrt: bool
+
+
+class ProposalOut(BaseModel):
+    id: int
+    state: str
+    mode: str
+    strategy_id: int
+    signal_id: str
+    parent_proposal_id: int | None
+    change_generation: int
+
+    instrument: str
+    direction: str
+    size: Dec
+    proposal_price: Dec
+    stop_price: Dec
+    stop_distance: Dec
+    stop_distance_pct: Dec
+    proposal_kind: str
+    limit_price: Dec | None
+
+    nav: Dec | None
+    drawdown: Dec | None
+    aggregate_risk_utilization_before: Dec | None
+    aggregate_risk_utilization_after: Dec | None
+    risk_eur: Dec | None
+    correlation_to_open_positions: Dec | None
+    price_age_seconds: int | None
+    limit_utilization: list | None
+    stage1_result: str | None
+
+    signal_at: datetime
+    displayed_at: datetime | None
+    expires_at: datetime | None
+    remaining_seconds: float | None
+
+    lock_state: LockStateOut
+
+
+class ApproveIn(BaseModel):
+    confirm: bool = Field(description="Muss true sein -- expliziter Bestätigungsschritt.")
+
+
+class ChangeIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+    size: Decimal | None = None
+    proposal_price: Decimal | None = None
+    stop_price: Decimal | None = None
+
+
+class DiscardIn(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class ActionErrorDetail(BaseModel):
+    code: str
+    message: str
+    current_state: str | None = None
+
+
+class DashboardStatusOut(BaseModel):
+    queue_length: int
+    notifications_failing: int
+
+
 class TradeOut(Out):
     id: int
     order_id: int

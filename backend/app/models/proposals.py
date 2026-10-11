@@ -127,6 +127,15 @@ class Proposal(Base):
 
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
 
+    # Optimistic lock (HED-43, Entwurf 5.2): zwei gleichzeitige Board-Aktionen auf
+    # denselben Vorschlag dürfen nicht beide durchgehen. SQLAlchemy vergleicht diese
+    # Spalte bei jedem UPDATE/DELETE gegen den beim Laden gesehenen Wert und wirft
+    # StaleDataError, wenn eine andere Transaktion dazwischen committet hat -- die
+    # zweite Aktion bekommt so immer einen Konflikt statt eines stillen Überschreibens.
+    version: Mapped[int] = mapped_column(default=0)
+
+    __mapper_args__ = {"version_id_col": version}
+
     @validates("strategy_gate_status")
     def _freeze_strategy_gate_status(self, _key: str, value: str) -> str:
         current = self.__dict__.get("strategy_gate_status")
