@@ -23,6 +23,20 @@ from app.trading.versandengpass import VersandOrder
 from tests.conftest import D, asset_id, create_portfolio
 
 
+@pytest.fixture(autouse=True)
+async def offenes_firmenweites_kennzeichen(session):
+    """Normalzustand einer laufenden Installation (Konvention aus test_proposals.py,
+    HED-47): das firmenweite Kennzeichen existiert und ist offen, sonst würde
+    ``create_proposal`` seit HED-47 jedes Signal hier fail-closed unterdrücken, bevor
+    Stufe 2 (Gegenstand dieser Datei) überhaupt erreicht wird. Tests, die den
+    gesperrten Fall selbst brauchen, setzen ``zeile.gesetzt`` explizit um. Commit statt
+    Flush, damit die Schreibtransaktion nicht offen bleibt, während ``client`` (eigene
+    Verbindung zum selben SQLite-File) in einer anderen Fixture schreibt -- sonst
+    'database is locked'."""
+    session.add(FirmenweitesSperrkennzeichen(gesetzt=False))
+    await session.commit()
+
+
 @pytest.fixture
 async def portfolio(client, session) -> Portfolio:
     portfolio_id = (await create_portfolio(client, currency="EUR", cash="10000"))["id"]
@@ -218,7 +232,6 @@ def mit_schluessel(betriebsart, monkeypatch):
 async def test_versandengpass_mit_echten_pruefern_lehnt_ohne_freigabe_ab(
     mit_schluessel, session, market, prices
 ):
-    session.add(FirmenweitesSperrkennzeichen(gesetzt=False))
     await session.commit()
     engpass = baue_versandengpass(market)
     order = VersandOrder(
@@ -233,7 +246,6 @@ async def test_versandengpass_mit_echten_pruefern_lehnt_ohne_freigabe_ab(
 async def test_versandengpass_mit_echten_pruefern_und_gueltiger_freigabe_erreicht_stufe2(
     mit_schluessel, session, market, prices, freigegebener_vorschlag
 ):
-    session.add(FirmenweitesSperrkennzeichen(gesetzt=False))
     await session.commit()
     engpass = baue_versandengpass(market)
     ergebnis = await engpass.send(session, _order(freigegebener_vorschlag))

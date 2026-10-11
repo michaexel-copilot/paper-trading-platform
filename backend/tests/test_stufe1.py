@@ -10,9 +10,23 @@ import pytest
 
 from app.models import Portfolio, Strategy
 from app.models.proposals import STATE_STUFE1_ABGELEHNT
+from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen
 from app.trading.proposals import Signal, create_proposal
 from app.trading.stufe1 import ProposalEingabe, lauf_stufe1
 from tests.conftest import D, asset_id, create_portfolio
+
+
+@pytest.fixture(autouse=True)
+async def offenes_firmenweites_kennzeichen(session):
+    """Normalzustand einer laufenden Installation (Konvention aus test_proposals.py,
+    HED-47): das firmenweite Kennzeichen existiert und ist offen, sonst würde
+    ``create_proposal`` seit HED-47 jedes Signal hier fail-closed unterdrücken, bevor
+    Stufe 1 (Gegenstand dieser Datei) überhaupt läuft. Commit statt Flush, damit die
+    Schreibtransaktion nicht offen bleibt, während ``client`` (eigene Verbindung zum
+    selben SQLite-File) in einer anderen Fixture schreibt -- sonst 'database is
+    locked'."""
+    session.add(FirmenweitesSperrkennzeichen(gesetzt=False))
+    await session.commit()
 
 
 @pytest.fixture
