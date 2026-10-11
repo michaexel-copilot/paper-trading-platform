@@ -38,6 +38,30 @@ Abfrage und das Minimum beider Werte (Festlegung Positionsquelle, Entwurf 10.2) 
 (OKX-Orderpfad) existiert noch nicht, siehe
 ``app.trading.versandengpass._sende_an_gegenstelle``. In Papier-Betrieb ist das eigene
 Buch die einzig geführte Position, es gibt keine davon getrennte Gegenstelle.
+
+Nachforderung der CRO-Abnahme zu PR #15 (HED-67, Runde 1), hier behoben:
+
+1. Teil 2 "Gegenposition" (Entwurf 10.4) entsteht jetzt **vor** der gesamten A1-A6-
+   Kette, nicht danach -- unabhängig davon, ob Teil 1 an A1 (Position nicht lesbar),
+   A2 (keine offene Position) oder A3/A6 (falsche Richtung) scheitert. Festlegung 1
+   aus 10.4 ("Teil 1 und Teil 2 sind nicht verkettet") gilt sonst nur für den
+   Erfolgsfall von Teil 1, nicht für seine Fehlschläge.
+2. A2 (keine offene Position) wird jetzt als Einzelfreigabe-Fall behandelt (Entwurf
+   10.2, Tabelle): Ist durch Punkt 1 bereits ein Gegenposition-Vorschlag entstanden,
+   deckt der die Einzelfreigabe ab. Ist keiner entstanden (kein Reversal erklärt),
+   eskaliert dieser Pfad an CRO+Board (``eskaliert_keine_position``) statt still zu
+   protokollieren -- ohne Preis-/Stop-Angaben der Strategie kann hier kein Vorschlag
+   gebildet werden, aber ein stiller Log-Eintrag wäre keine Einzelfreigabe.
+3. Unmittelbar vor dem Versand wird die offene Position ein zweites Mal gelesen und
+   die harte Obergrenze erneut geprüft (Entwurf 10.2 Festlegung A4 letzter Satz /
+   10.6: "zum Versandzeitpunkt", nicht nur bei der Signalverarbeitung). Hat sich die
+   Position zwischen A1 und Versand weiter verkleinert, wird erneut begrenzt
+   (gleiche Logik wie A4 Fall 1). Hat sie die Seite gewechselt, wird nicht gesendet
+   (``abgelehnt_richtung``, fail closed).
+4. ``reversal_counter_proposal_id`` wird jetzt für **jeden** Protokolleintrag gesetzt,
+   nicht nur im Erfolgsfall -- Folge von Punkt 1 (Teil 2 existiert bereits, bevor der
+   erste Protokolleintrag möglich ist), behebt sonst einen verlorenen Verweis bei
+   Reversal + Eskalation.
 """
 
 import logging
@@ -166,6 +190,33 @@ async def fuehre_automatischen_ausstieg_aus(
     firmwide_lock_state = _lock_zustand(await ist_firmenweit_gesperrt(session))
     strategy_lock_state = _lock_zustand(await ist_strategie_gesperrt(session, strategie_schluessel))
 
+    # Teil 2 "Gegenposition" (Entwurf 10.4, Festlegung 1: "Teil 1 und Teil 2 sind
+    # nicht verkettet") entsteht HIER, vor der gesamten A1-A6-Kette -- unabhängig
+    # davon, ob Teil 1 gleich an A1 (Position nicht lesbar), A2 (keine offene
+    # Position) oder A3/A6 (falsche Richtung) scheitert. Läuft Teil 2 erst nach
+    # dieser Kette, verschwindet ein von der Strategie ausdrücklich erklärtes
+    # Gegenposition-Vorhaben ersatzlos, sobald Teil 1 aus irgendeinem Grund nicht bis
+    # zum Versand kommt (CRO-Nachforderung HED-67, Punkt 2). Durchläuft normal die
+    # Doppelprüfung der Sperrkennzeichen in `create_proposal` (Festlegung 4): bei
+    # gesetztem Kennzeichen entsteht Teil 2 nicht (liefert None), Teil 1 läuft
+    # trotzdem weiter.
+    gegenposition: Proposal | None = None
+    if ist_reversal:
+        neue_richtung = "long" if signal.side == "buy" else "short"
+        counter_signal = Signal(
+            signal_id=f"{signal.signal_id}-gegenposition",
+            strategy_id=signal.strategy_id,
+            instrument=signal.instrument,
+            direction=neue_richtung,
+            size=signal.gegenposition_size,
+            proposal_price=signal.gegenposition_price,
+            stop_price=signal.gegenposition_stop_price,
+            proposal_kind="entry",
+            signal_at=signal.signal_at,
+        )
+        gegenposition = await create_proposal(session, counter_signal, mode=str(get_betriebsart()))
+        await session.flush()
+
     def _eintrag(**felder) -> AutoExitLogEntry:
         basis = dict(
             mode=str(get_betriebsart()),
@@ -181,7 +232,10 @@ async def fuehre_automatischen_ausstieg_aus(
             size_was_capped=False,
             size_capped_to=None,
             is_reversal=ist_reversal,
-            reversal_counter_proposal_id=None,
+            # CRO-Nachforderung HED-67, Punkt 4: in jedem Protokolleintrag gesetzt,
+            # nicht nur im Erfolgsfall -- Teil 2 existiert (falls entstanden) bereits
+            # an dieser Stelle, siehe oben.
+            reversal_counter_proposal_id=gegenposition.id if gegenposition is not None else None,
             firmwide_lock_state=firmwide_lock_state,
             strategy_lock_state=strategy_lock_state,
             escalation_at=None,
@@ -192,7 +246,9 @@ async def fuehre_automatischen_ausstieg_aus(
         basis.update(felder)
         return AutoExitLogEntry(**basis)
 
-    async def _eskaliere(grund: str, **felder) -> AutoExitErgebnis:
+    async def _eskaliere(
+        grund: str, *, result: str = "eskaliert_kursfrische", **felder
+    ) -> AutoExitErgebnis:
         jetzt = utcnow()
         empfaenger = ["cro", "board"]
         log.warning(
@@ -208,7 +264,7 @@ async def fuehre_automatischen_ausstieg_aus(
             jetzt + ESKALATIONSFRIST,
         )
         eintrag = _eintrag(
-            result="eskaliert_kursfrische",
+            result=result,
             escalation_at=jetzt,
             escalation_recipients=empfaenger,
             escalation_deadline=jetzt + ESKALATIONSFRIST,
@@ -217,7 +273,7 @@ async def fuehre_automatischen_ausstieg_aus(
         )
         session.add(eintrag)
         await session.commit()
-        return AutoExitErgebnis(eintrag)
+        return AutoExitErgebnis(eintrag, gegenposition)
 
     # A1: offene Position lesbar? Ein technischer Lesefehler (nicht: "keine Position",
     # das ist A2) ist fail closed -- Eskalation, keine automatische Order.
@@ -251,12 +307,27 @@ async def fuehre_automatischen_ausstieg_aus(
         )
         session.add(eintrag)
         await session.commit()
-        return AutoExitErgebnis(eintrag)
+        return AutoExitErgebnis(eintrag, gegenposition)
 
-    # A2: offene Größe > 0? Ohne offene Position gibt es nichts zu schließen -- kein
-    # Fehler, aber auch kein automatischer Ausstieg (Entwurf 10.2, A2).
+    # A2: offene Größe > 0? Ohne offene Position gibt es nichts zu schließen (Entwurf
+    # 10.2, A2: "Als Einzelfreigabe-Fall behandeln", CRO-Nachforderung HED-67, Punkt
+    # 3). Ist durch die Reversal-Erkennung oben bereits ein Gegenposition-Vorschlag
+    # entstanden, deckt der die Einzelfreigabe ab -- kein zusätzlicher Eskalations-
+    # bedarf. Ohne erklärte Gegenposition gibt es keinen Weg, hier automatisch einen
+    # Vorschlag zu bilden (die Strategie hat keinen Preis/Stop für diesen Fall
+    # geliefert) -- stattdessen Eskalation an CRO+Board, damit eine Person entscheidet.
     if bestehende_richtung is None:
-        return await _abgelehnt("abgelehnt_groesse")
+        if gegenposition is not None:
+            return await _abgelehnt("abgelehnt_groesse")
+        return await _eskaliere(
+            "keine_offene_position",
+            result="eskaliert_keine_position",
+            position_before=offene_position,
+            position_after=offene_position,
+            position_direction_closed=position_direction_closed,
+            price_age_seconds=0,
+            price_source_timestamp=utcnow(),
+        )
 
     # A3/A6: Richtung der Order ist die schließende für die bestehende Position?
     if bestehende_richtung != position_direction_closed:
@@ -288,30 +359,38 @@ async def fuehre_automatischen_ausstieg_aus(
         price_age_seconds = 0
         price_source_timestamp = utcnow()
 
-    # Reversal (Entwurf 10.4): Teil 2 "Gegenposition" entsteht unabhängig von Teil 1,
-    # als normaler neuer Vorschlag -- Teil 1 läuft unten unverändert weiter, egal ob
-    # Teil 2 gelingt, verfällt oder verworfen wird (Festlegung 1).
-    gegenposition: Proposal | None = None
-    if ist_reversal:
-        neue_richtung = "long" if signal.side == "buy" else "short"
-        counter_signal = Signal(
-            signal_id=f"{signal.signal_id}-gegenposition",
-            strategy_id=signal.strategy_id,
-            instrument=signal.instrument,
-            direction=neue_richtung,
-            size=signal.gegenposition_size,
-            proposal_price=signal.gegenposition_price,
-            stop_price=signal.gegenposition_stop_price,
-            proposal_kind="entry",
-            signal_at=signal.signal_at,
+    # Zweite Positionslese, unmittelbar vor dem Versand (Entwurf 10.2 Festlegung A4
+    # letzter Satz / 10.6: "Größe erneut gegen offene Position zum Versandzeitpunkt
+    # geprüft, nicht nur bei der Signalverarbeitung" -- CRO-Nachforderung HED-67,
+    # Punkt 1, höchste Priorität). Schließt die Lücke zwischen der A1-Lesung oben und
+    # dem tatsächlichen Versand: dazwischen kann ein Fill (Teilausführung, Stop, ein
+    # anderer Vorgang) die Position verändert haben.
+    offene_position_versand = await _offene_position(session, portfolio.id, asset.id)
+    richtung_versand = (
+        "long" if offene_position_versand > 0 else "short" if offene_position_versand < 0 else None
+    )
+    if richtung_versand is not None and richtung_versand != position_direction_closed:
+        # Position hat zwischen A1 und Versand die Seite gewechselt -- eine Order in
+        # der ursprünglich schließenden Richtung würde jetzt Risiko erhöhen statt
+        # senken. Fail closed, kein Versand (gleiche Kategorie wie A3/A6).
+        return await _abgelehnt(
+            "abgelehnt_richtung",
+            size_was_capped=size_was_capped,
+            size_capped_to=exit_size if size_was_capped else None,
         )
-        gegenposition = await create_proposal(session, counter_signal, mode=str(get_betriebsart()))
-        await session.flush()
+    offene_groesse_versand = abs(offene_position_versand)
+    if offene_groesse_versand < exit_size:
+        size_was_capped = True
+        exit_size = offene_groesse_versand
+    if exit_size <= 0:
+        return await _abgelehnt(
+            "abgelehnt_groesse",
+            size_was_capped=size_was_capped,
+            size_capped_to=exit_size if size_was_capped else None,
+        )
 
     # B1-B3 + Versand: dieselbe Stufe-2-Nachprüfung (HED-44) wie jede andere Order,
-    # über den Versand-Engpass (HED-42). "Größe erneut gegen offene Position zum
-    # Versandzeitpunkt geprüft" (Entwurf 10.6) -- die obige Lesung ist bereits die
-    # unmittelbar vor diesem Aufruf, kein zweiter, getrennter Lesevorgang nötig.
+    # über den Versand-Engpass (HED-42).
     order = VersandOrder(
         gattung="strategie_ausstieg",
         strategie_schluessel=strategie_schluessel,
@@ -330,8 +409,8 @@ async def fuehre_automatischen_ausstieg_aus(
         # andere Ursache ist auf diesem Pfad erreichbar (siehe Moduldokumentation).
         return await _eskaliere(
             "kursfrische",
-            position_before=offene_position,
-            position_after=offene_position,
+            position_before=offene_position_versand,
+            position_after=offene_position_versand,
             position_direction_closed=position_direction_closed,
             price_age_seconds=price_age_seconds,
             price_source_timestamp=price_source_timestamp,
@@ -339,18 +418,17 @@ async def fuehre_automatischen_ausstieg_aus(
             size_capped_to=exit_size if size_was_capped else None,
         )
 
-    neue_position = offene_position + (exit_size if signal.side == "buy" else -exit_size)
+    neue_position = offene_position_versand + (exit_size if signal.side == "buy" else -exit_size)
     eintrag = _eintrag(
         result="versandt",
         sent_at=vor_versand,
-        position_before=offene_position,
+        position_before=offene_position_versand,
         position_after=neue_position,
         position_direction_closed=position_direction_closed,
         price_age_seconds=price_age_seconds,
         price_source_timestamp=price_source_timestamp,
         size_was_capped=size_was_capped,
         size_capped_to=exit_size if size_was_capped else None,
-        reversal_counter_proposal_id=gegenposition.id if gegenposition is not None else None,
     )
     session.add(eintrag)
     await session.commit()

@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.models import Portfolio, Position, Strategy
 from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen, StrategieSperrkennzeichen
+from app.trading import auto_exit as auto_exit_module
 from app.trading.auto_exit import AusstiegsSignal, AutoExitFehler, fuehre_automatischen_ausstieg_aus
 from app.trading.versandengpass import Versandengpass, VersandOrder
 from tests.conftest import D, asset_id, create_portfolio
@@ -100,15 +101,47 @@ def mit_schluessel(betriebsart, monkeypatch):
 # --- A1/A2: keine offene Position --------------------------------------------------
 
 
-async def test_ohne_offene_position_kein_automatischer_ausstieg(
+async def test_ohne_offene_position_eskaliert_als_einzelfreigabe_fall(
     mit_schluessel, session, market, prices, strategy
 ):
+    """A2 ohne erklärte Gegenposition: kein automatischer Weg, einen Vorschlag zu
+    bilden (kein Preis/Stop geliefert) -- Entwurf 10.2 "Als Einzelfreigabe-Fall
+    behandeln" wird über Eskalation an CRO+Board erreicht, nicht über einen stillen
+    Log-Eintrag (CRO-Nachforderung HED-67, Punkt 3)."""
     engpass = _FakeEngpass(stufe2_pruefer=_StufePruefer(True))
     ergebnis = await fuehre_automatischen_ausstieg_aus(
         session, market, engpass, _signal(strategy.id)
     )
-    assert ergebnis.eintrag.result == "abgelehnt_groesse"
+    assert ergebnis.eintrag.result == "eskaliert_keine_position"
+    assert ergebnis.eintrag.escalation_result == "keine_offene_position"
+    assert ergebnis.eintrag.escalation_recipients == ["cro", "board"]
+    assert ergebnis.eintrag.escalation_at is not None
     assert ergebnis.eintrag.is_reversal is False
+    assert ergebnis.gegenposition is None
+
+
+async def test_ohne_offene_position_mit_erklaerter_gegenposition_deckt_teil2_die_einzelfreigabe(
+    mit_schluessel, session, market, prices, strategy
+):
+    """A2 mit erklärter Gegenposition (Reversal-Signal, aber Teil 1 hat nichts zu
+    schließen): Teil 2 entsteht trotzdem und deckt die Einzelfreigabe bereits ab --
+    keine zusätzliche Eskalation nötig (CRO-Nachforderung HED-67, Punkte 2+3)."""
+    engpass = _FakeEngpass(stufe2_pruefer=_StufePruefer(True))
+    signal = _signal(
+        strategy.id,
+        side="sell",
+        size=D("0.1"),
+        gegenposition_size=D("0.07"),
+        gegenposition_price=D(49000),
+        gegenposition_stop_price=D(50500),
+    )
+    ergebnis = await fuehre_automatischen_ausstieg_aus(session, market, engpass, signal)
+    assert ergebnis.eintrag.result == "abgelehnt_groesse"
+    assert ergebnis.eintrag.escalation_at is None
+    assert ergebnis.gegenposition is not None
+    assert ergebnis.gegenposition.direction == "short"
+    assert ergebnis.gegenposition.size == D("0.07")
+    assert ergebnis.eintrag.reversal_counter_proposal_id == ergebnis.gegenposition.id
 
 
 # --- A3/A6: Richtung ist nicht schließend ------------------------------------------
@@ -209,6 +242,59 @@ async def test_reversal_spaltet_in_schliessung_und_gegenposition(
     assert ergebnis.eintrag.reversal_counter_proposal_id == ergebnis.gegenposition.id
 
 
+async def test_reversal_teil2_entsteht_auch_wenn_teil1_an_a1_scheitert(
+    mit_schluessel, session, market, prices, strategy, portfolio, btc, monkeypatch
+):
+    """Teil 1 und Teil 2 sind nicht verkettet (Entwurf 10.4 Festlegung 1) -- auch
+    wenn Teil 1 an A1 (Position nicht lesbar) scheitert, muss das von der Strategie
+    erklärte Gegenposition-Vorhaben (Teil 2) entstehen (CRO-Nachforderung HED-67,
+    Punkt 2)."""
+
+    async def kaputt(session_, portfolio_id, asset_id_):
+        raise RuntimeError("Positionslese fehlgeschlagen (Testsimulation)")
+
+    monkeypatch.setattr("app.trading.auto_exit._offene_position", kaputt)
+    engpass = _FakeEngpass(stufe2_pruefer=_StufePruefer(True))
+    signal = _signal(
+        strategy.id,
+        side="sell",
+        size=D("0.1"),
+        gegenposition_size=D("0.07"),
+        gegenposition_price=D(49000),
+        gegenposition_stop_price=D(50500),
+    )
+    ergebnis = await fuehre_automatischen_ausstieg_aus(session, market, engpass, signal)
+
+    assert ergebnis.eintrag.result == "eskaliert_kursfrische"
+    assert ergebnis.eintrag.escalation_result == "position_nicht_lesbar"
+    assert ergebnis.gegenposition is not None
+    assert ergebnis.gegenposition.direction == "short"
+    assert ergebnis.gegenposition.size == D("0.07")
+    assert ergebnis.eintrag.reversal_counter_proposal_id == ergebnis.gegenposition.id
+
+
+async def test_reversal_teil2_entsteht_auch_wenn_teil1_an_a3_scheitert(
+    mit_schluessel, session, market, prices, strategy, portfolio, btc
+):
+    """Wie oben, aber Teil 1 scheitert an A3 (falsche Richtung -- Order würde die
+    bestehende Position erhöhen statt schließen)."""
+    await _setze_position(session, portfolio.id, btc, "0.03")  # long
+    engpass = _FakeEngpass(stufe2_pruefer=_StufePruefer(True))
+    signal = _signal(
+        strategy.id,
+        side="buy",  # auf Long eine Erhöhung, keine Schließung -> A3 schlägt fehl
+        size=D("0.1"),
+        gegenposition_size=D("0.07"),
+        gegenposition_price=D(49000),
+        gegenposition_stop_price=D(50500),
+    )
+    ergebnis = await fuehre_automatischen_ausstieg_aus(session, market, engpass, signal)
+
+    assert ergebnis.eintrag.result == "abgelehnt_richtung"
+    assert ergebnis.gegenposition is not None
+    assert ergebnis.eintrag.reversal_counter_proposal_id == ergebnis.gegenposition.id
+
+
 async def test_reversal_fehlt_preis_eskaliert_nicht_sondern_wirft(
     mit_schluessel, session, market, prices, strategy, portfolio, btc
 ):
@@ -217,6 +303,99 @@ async def test_reversal_fehlt_preis_eskaliert_nicht_sondern_wirft(
     signal = _signal(strategy.id, side="sell", gegenposition_size=D("0.05"))
     with pytest.raises(AutoExitFehler):
         await fuehre_automatischen_ausstieg_aus(session, market, engpass, signal)
+
+
+# --- Zweite Positionslese zum Versandzeitpunkt (Entwurf 10.2 Festlegung A4 letzter
+# Satz / 10.6, CRO-Nachforderung HED-67 Punkt 1) --------------------------------------
+
+
+async def test_position_schrumpft_zwischen_a1_und_versand_wird_am_versand_erneut_begrenzt(
+    mit_schluessel, session, market, prices, strategy, portfolio, btc, monkeypatch
+):
+    """Die Position hat sich zwischen der A1-Lesung und dem tatsächlichen Versand
+    weiter verkleinert (z. B. ein Teil-Stop hat in der Zwischenzeit gefüllt) -- die
+    harte Obergrenze wird ein zweites Mal geprüft, die tatsächlich gesendete Order
+    ist die neu begrenzte, kleinere Größe."""
+    await _setze_position(session, portfolio.id, btc, "0.05")  # long, A1 liest 0.05
+    aufrufe = {"n": 0}
+    orig = auto_exit_module._offene_position
+
+    async def schrumpfend(session_, portfolio_id, asset_id_):
+        aufrufe["n"] += 1
+        if aufrufe["n"] == 1:
+            return await orig(session_, portfolio_id, asset_id_)
+        return D("0.02")  # zum Versandzeitpunkt nur noch 0.02 offen
+
+    monkeypatch.setattr(auto_exit_module, "_offene_position", schrumpfend)
+    pruefer = _StufePruefer(True)
+    engpass = _FakeEngpass(stufe2_pruefer=pruefer)
+
+    ergebnis = await fuehre_automatischen_ausstieg_aus(
+        session, market, engpass, _signal(strategy.id, side="sell", size=D("0.05"))
+    )
+
+    assert ergebnis.eintrag.result == "versandt"
+    assert ergebnis.eintrag.size_was_capped is True
+    assert ergebnis.eintrag.size_capped_to == D("0.02")
+    assert ergebnis.eintrag.position_after == D("0")
+    assert pruefer.aufgerufen_mit[0].quantity == D("0.02")
+
+
+async def test_position_schliesst_vollstaendig_zwischen_a1_und_versand_wird_abgelehnt(
+    mit_schluessel, session, market, prices, strategy, portfolio, btc, monkeypatch
+):
+    """Die Position ist zwischen A1 und Versand bereits vollständig geschlossen --
+    keine automatische Order wird gesendet, Ergebnis bleibt fail closed statt eine
+    Order mit Größe null zu versuchen."""
+    await _setze_position(session, portfolio.id, btc, "0.05")  # long
+    aufrufe = {"n": 0}
+    orig = auto_exit_module._offene_position
+
+    async def geschlossen(session_, portfolio_id, asset_id_):
+        aufrufe["n"] += 1
+        if aufrufe["n"] == 1:
+            return await orig(session_, portfolio_id, asset_id_)
+        return D("0")
+
+    monkeypatch.setattr(auto_exit_module, "_offene_position", geschlossen)
+    pruefer = _StufePruefer(True)
+    engpass = _FakeEngpass(stufe2_pruefer=pruefer)
+
+    ergebnis = await fuehre_automatischen_ausstieg_aus(
+        session, market, engpass, _signal(strategy.id, side="sell", size=D("0.05"))
+    )
+
+    assert ergebnis.eintrag.result == "abgelehnt_groesse"
+    assert pruefer.aufgerufen_mit == []
+
+
+async def test_position_dreht_zwischen_a1_und_versand_wird_nicht_gesendet(
+    mit_schluessel, session, market, prices, strategy, portfolio, btc, monkeypatch
+):
+    """Die Position hat zwischen A1 und Versand die Seite gewechselt (z. B. durch
+    einen zwischenzeitlichen Fill in Gegenrichtung) -- eine Order in der
+    ursprünglich schließenden Richtung würde jetzt Risiko erhöhen statt senken und
+    darf nicht gesendet werden."""
+    await _setze_position(session, portfolio.id, btc, "0.05")  # long, A1 liest long
+    aufrufe = {"n": 0}
+    orig = auto_exit_module._offene_position
+
+    async def gedreht(session_, portfolio_id, asset_id_):
+        aufrufe["n"] += 1
+        if aufrufe["n"] == 1:
+            return await orig(session_, portfolio_id, asset_id_)
+        return D("-0.03")  # zum Versandzeitpunkt bereits short
+
+    monkeypatch.setattr(auto_exit_module, "_offene_position", gedreht)
+    pruefer = _StufePruefer(True)
+    engpass = _FakeEngpass(stufe2_pruefer=pruefer)
+
+    ergebnis = await fuehre_automatischen_ausstieg_aus(
+        session, market, engpass, _signal(strategy.id, side="sell", size=D("0.05"))
+    )
+
+    assert ergebnis.eintrag.result == "abgelehnt_richtung"
+    assert pruefer.aufgerufen_mit == []
 
 
 # --- B1-B3 Kursfrische -> Eskalation (Entwurf 10.3, Testpfad 23) -------------------

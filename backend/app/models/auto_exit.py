@@ -33,6 +33,7 @@ RESULTS = (
     "abgelehnt_groesse",
     "abgelehnt_richtung",
     "eskaliert_kursfrische",
+    "eskaliert_keine_position",
     "von_gegenstelle_abgelehnt",
 )
 
