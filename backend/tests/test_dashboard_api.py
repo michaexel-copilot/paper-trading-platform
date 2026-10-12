@@ -10,8 +10,22 @@ import pytest
 
 from app.models import Strategy
 from app.models.proposals import STATE_STUFE1_LAEUFT, STATE_WARTET_AUF_BOARD
+from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen
 from app.trading.proposals import Signal, create_proposal, transition
 from tests.conftest import _client, sign_up
+
+
+@pytest.fixture(autouse=True)
+async def offenes_firmenweites_kennzeichen(session):
+    """Normalzustand einer laufenden Installation (Konvention aus test_stufe1.py,
+    HED-47): das firmenweite Kennzeichen existiert und ist offen, sonst würde
+    ``create_proposal`` seit HED-47 jedes Signal hier fail-closed unterdrücken, bevor
+    es den Dashboard-Pfad überhaupt erreicht. Commit statt Flush, damit die
+    Schreibtransaktion nicht offen bleibt, während ``client`` (eigene Verbindung zum
+    selben SQLite-File) in einer anderen Fixture schreibt -- sonst 'database is
+    locked'."""
+    session.add(FirmenweitesSperrkennzeichen(gesetzt=False))
+    await session.commit()
 
 
 @pytest.fixture
@@ -89,7 +103,11 @@ async def test_list_shows_the_proposal_with_required_fields(client, proposal_id)
     assert item["remaining_seconds"] > 0
     assert item["change_generation"] == 0
     assert item["parent_proposal_id"] is None
-    assert item["lock_state"] == {"firmenweit_gesperrt": True, "strategie_gesperrt": False}
+    # Vor HED-47 gab es für diesen Test keine Zeile -- fail-closed galt daher als
+    # 'gesperrt'. Die autouse-Fixture offenes_firmenweites_kennzeichen bildet jetzt den
+    # realistischen Normalzustand nach (offene Installation); den fail-closed-Fall ohne
+    # Zeile deckt test_sperrkennzeichen.py ab.
+    assert item["lock_state"] == {"firmenweit_gesperrt": False, "strategie_gesperrt": False}
 
 
 async def test_detail_endpoint_returns_same_proposal(client, proposal_id):

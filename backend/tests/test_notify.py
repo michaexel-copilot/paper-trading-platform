@@ -15,6 +15,7 @@ from app.config import Settings
 from app.db import make_engine, make_session_factory
 from app.models import Base, BoardNotification, Strategy
 from app.models.proposals import STATE_STUFE1_LAEUFT, STATE_WARTET_AUF_BOARD
+from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen
 from app.trading.proposals import Signal, create_proposal, transition
 
 
@@ -30,6 +31,17 @@ async def session_factory(tmp_path):
     factory = make_session_factory(engine)
     yield factory
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+async def offenes_firmenweites_kennzeichen(session_factory):
+    """Normalzustand einer laufenden Installation (Konvention aus test_stufe1.py,
+    HED-47): das firmenweite Kennzeichen existiert und ist offen, sonst würde
+    ``create_proposal`` seit HED-47 jedes Signal hier fail-closed unterdrücken, bevor
+    die Benachrichtigung (Gegenstand dieser Datei) überhaupt ausgelöst wird."""
+    async with session_factory() as session:
+        session.add(FirmenweitesSperrkennzeichen(gesetzt=False))
+        await session.commit()
 
 
 @pytest.fixture

@@ -44,6 +44,16 @@ async def session(session_factory):
         yield db
 
 
+@pytest.fixture(autouse=True)
+async def offenes_firmenweites_kennzeichen(session):
+    """Normalzustand einer laufenden Installation (Konvention aus test_proposals.py):
+    das firmenweite Kennzeichen existiert und ist offen, bevor ``create_proposal``
+    die fail-closed-Doppelprüfung liest (HED-47). Der fail-closed-Fall ohne Zeile ist
+    test_sperrkennzeichen.py Sache, nicht hier je Testfall erneut zu beweisen."""
+    session.add(FirmenweitesSperrkennzeichen(gesetzt=False))
+    await session.commit()
+
+
 async def make_strategy(session, gate_status: str = "S3") -> Strategy:
     strategy = Strategy(gate_status=gate_status)
     session.add(strategy)
@@ -116,11 +126,10 @@ async def test_lock_state_reads_live_not_frozen(session):
     proposal_id = await goto_z3(session, strategy.id)
     proposal = await session.get(service.Proposal, proposal_id)
 
-    # Fehlende Zeile gilt fail-closed als 'gesetzt' (app.sperrkennzeichen) -- eine
-    # offene Lage muss explizit angelegt werden.
-    row = FirmenweitesSperrkennzeichen(gesetzt=False)
-    session.add(row)
-    await session.commit()
+    # Zeile kommt bereits aus der autouse-Fixture offenes_firmenweites_kennzeichen
+    # (offen, da create_proposal seit HED-47 fail-closed prüft) -- hier wiederverwendet,
+    # nicht neu angelegt, sonst gäbe es zwei Zeilen in der Singleton-Tabelle.
+    row = await session.scalar(select(FirmenweitesSperrkennzeichen))
 
     before = await service.lock_state(session, proposal)
     assert before.firmenweit_gesperrt is False
