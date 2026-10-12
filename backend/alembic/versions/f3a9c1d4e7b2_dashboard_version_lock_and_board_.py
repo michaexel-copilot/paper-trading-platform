@@ -3,7 +3,7 @@
 HED-43, Entwurf HED-36 Fassung 1.1 Abschnitt 5.
 
 Revision ID: f3a9c1d4e7b2
-Revises: b6d30c60657b
+Revises: 88ed15da8f4c
 Create Date: 2026-10-11 10:00:00.000000
 
 """
@@ -17,7 +17,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "f3a9c1d4e7b2"
-down_revision: str | Sequence[str] | None = "b6d30c60657b"
+down_revision: str | Sequence[str] | None = "88ed15da8f4c"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
