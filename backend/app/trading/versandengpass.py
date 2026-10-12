@@ -12,9 +12,14 @@ erneut versucht.
 Was hier bewusst NICHT gebaut ist: der volle Lebenszyklus der Sperrkennzeichen
 (Zwei-Personen-Regel, automatisches Setzen, Benachrichtigung -- Kill-Switch-Zuschnitt-
 Folgeissue), der echte Freigabe-Nachweis gegen das Proposal-Modell aus HED-41 (B-2-
-Folgeissue, da HED-41 noch nicht gemergt ist) und der echte Netzwerkaufruf an die
-Gegenstelle (B-6, wartet auf das OKX-Demo-Secret). Die fail-closed-Standardwerte unten
-sorgen dafür, dass vor diesen Folgeissues technisch keine Order das Haus verlassen kann.
+Folgeissue, da HED-41 noch nicht gemergt ist) und der Live-Netzwerkaufruf an die
+Gegenstelle (noch kein Live-Schlüssel, kein Live-Orderpfad). Die fail-closed-
+Standardwerte unten sorgen dafür, dass vor diesen Folgeissues technisch keine Order
+das Haus verlassen kann.
+
+B-6 (HED-76) hat ``_sende_an_gegenstelle`` für die Papier-Betriebsart bereits auf den
+echten OKX-Demo-Orderpfad verdrahtet (``app.trading.papier.okx_demo``) -- nur
+Integrationstest, nie Performancemessung (Handbuch Abschnitt 7).
 """
 
 import logging
@@ -24,7 +29,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.betriebsart import get_betriebsart
+from app.betriebsart import Betriebsart, get_betriebsart
 from app.models.versandengpass import VersandEngpassEintrag
 from app.schluessel import SchluesselFehler, read_exchange_credential
 from app.sperrkennzeichen import doppelpruefung_offen
@@ -163,12 +168,23 @@ class Versandengpass:
 
     async def _sende_an_gegenstelle(self, order: VersandOrder) -> str:
         """Die einzige Stelle, die je einen echten Netzwerkaufruf an die Gegenstelle
-        machen darf. Noch nicht verdrahtet: B-6 baut den OKX-Orderpfad, sobald das
-        OKX-Demo-Secret vorliegt. Bis dahin kann -- selbst wenn alle sieben Prüfungen
-        bestehen -- keine Order das Haus verlassen.
+        machen darf.
+
+        Papier-Betriebsart: verdrahtet auf den OKX-Demo-Orderpfad (B-6,
+        ``app.trading.papier.okx_demo``). Der Import steht bewusst hier, nicht am
+        Dateikopf -- ``app/trading/papier`` ist im Live-Artefakt nicht enthalten
+        (Auflage 4); ein Import am Dateikopf würde den Start des Live-Artefakts
+        brechen, selbst wenn dieser Zweig dort nie erreicht wird.
+
+        Live-Betriebsart: weiterhin nicht gebaut. B-6 deckt ausdrücklich keinen
+        Live-Orderpfad und keinen Live-Schlüssel ab.
         """
+        if get_betriebsart() is Betriebsart.PAPIER:
+            from app.trading.papier.okx_demo import platziere_order
+
+            credential = read_exchange_credential(order.exchange)
+            return await platziere_order(credential, order)
         raise NotImplementedError(
-            f"B-6 (OKX-Orderpfad) ist noch nicht gebaut. Order für {order.exchange} "
-            f"{order.symbol} hat alle Prüfungen bestanden, aber es gibt noch keinen "
-            "Code, der sie absenden könnte."
+            f"Live-Orderpfad für {order.exchange} {order.symbol} ist noch nicht gebaut. "
+            "B-6 deckt ausschließlich den OKX-Demo-Orderpfad ab."
         )

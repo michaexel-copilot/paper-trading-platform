@@ -5,7 +5,7 @@ Alles, was hier oder in Unterpaketen liegt, ist im Live-Artefakt **nicht enthalt
 schließt dieses Paket aus, statt es zur Laufzeit abzuschalten -- ein Laufzeitschalter
 wäre genau der Konfigurationsfehler, den das Board als Hauptrisiko benannt hat.
 
-Noch leer: B-6 (OKX-Orderpfad auf Demo) ist der erste konkrete Baustein, der hier
-landet, sobald das OKX-Demo-Secret vorliegt. Bis dahin ist dieses Paket die Build-
-Prüfung wert, nicht die Logik.
+``okx_demo.py`` (B-6, HED-76) ist der erste konkrete Baustein: der echte OKX-Demo-
+Orderpfad plus reiner Kontostand-Lesevorgang, nur Integrationstest, nie
+Performancemessung (Handbuch Abschnitt 7).
 """

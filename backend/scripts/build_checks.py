@@ -9,6 +9,11 @@ Auflage 4: für das Live-Artefakt darf ``app/trading/papier`` -- der designierte
 Ablageort für papier-spezifischen Code (Simulations-Fill-Logik, Demo-Orderpfad,
 Testdaten-Erzeuger) -- im Quellbaum nicht vorhanden sein.
 
+Isolationspflicht B-6 (HED-76 Punkt 3): ``app/trading/papier`` darf keines der Module
+importieren, die den Ergebnis-/Performance-Speicher der Paper-Trading-Plattform
+ausmachen. OKX-Demo-Preise liegen 1,41 % neben dem Live-Markt (Handbuch Abschnitt 7)
+und dürfen technisch keinen Pfad in ein Performance- oder Renditedokument haben.
+
 Aufruf: ``python scripts/build_checks.py --artefakt-art papier_artefakt|live_artefakt``
 Exit-Code ungleich 0 bricht den Build ab (CI-Schritt, siehe .github/workflows).
 """
@@ -22,6 +27,16 @@ ERLAUBTE_ZUGRIFFSSTELLE = Path("app/trading/versandengpass.py")
 PAPIER_NUR_PAKET = Path("app/trading/papier")
 SCHLUESSELMODUL_NAME = "schluessel.py"
 ZU_SUCHENDE_FUNKTION = "read_exchange_credential"
+
+# HED-76 Punkt 3: Module, die den Ergebnis-/Performance-Speicher ausmachen oder
+# darauf zugreifen. Keines davon darf von app/trading/papier aus importierbar sein.
+VERBOTENE_PERFORMANCE_MODULE = (
+    "app.models",
+    "app.trading.valuation",
+    "app.trading.matcher",
+    "app.trading.engine",
+    "app.trading.orders",
+)
 
 
 def _ruft_funktion_auf(baum: ast.AST, funktionsname: str) -> bool:
@@ -74,6 +89,44 @@ def pruefe_live_artefakt_ohne_papier_pakete(app_root: Path) -> str | None:
     return None
 
 
+def _importierte_module(baum: ast.AST) -> set[str]:
+    module = set()
+    for knoten in ast.walk(baum):
+        if isinstance(knoten, ast.Import):
+            for alias in knoten.names:
+                module.add(alias.name)
+        elif isinstance(knoten, ast.ImportFrom) and knoten.module:
+            module.add(knoten.module)
+    return module
+
+
+def pruefe_papier_ohne_performance_abhaengigkeit(app_root: Path) -> str | None:
+    """Isolationspflicht B-6 (HED-76 Punkt 3): kein Pfad von OKX-Demo-Daten in den
+    Ergebnis-/Performance-Speicher. Mechanische Näherung: ``app/trading/papier``
+    importiert keines der Module, die diesen Speicher schreiben oder lesen."""
+    pfad = app_root / "trading" / "papier"
+    if not pfad.exists():
+        return None
+    for datei in sorted(pfad.rglob("*.py")):
+        baum = ast.parse(datei.read_text(), filename=str(datei))
+        module = _importierte_module(baum)
+        treffer = sorted(
+            m
+            for m in module
+            if any(
+                m == verboten or m.startswith(verboten + ".")
+                for verboten in VERBOTENE_PERFORMANCE_MODULE
+            )
+        )
+        if treffer:
+            relativ = datei.relative_to(app_root.parent)
+            return (
+                f"{relativ} importiert Performance-/Rendite-Module ({', '.join(treffer)}). "
+                "Isolationspflicht B-6 (HED-76): OKX-Demo-Code darf diese nicht erreichen."
+            )
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -93,6 +146,10 @@ def main() -> int:
         papier_fehler = pruefe_live_artefakt_ohne_papier_pakete(args.app_root)
         if papier_fehler:
             fehler.append(papier_fehler)
+
+    isolations_fehler = pruefe_papier_ohne_performance_abhaengigkeit(args.app_root)
+    if isolations_fehler:
+        fehler.append(isolations_fehler)
 
     if fehler:
         for eintrag in fehler:

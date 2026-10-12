@@ -447,17 +447,27 @@ async def test_gesetztes_sperrkennzeichen_blockiert_ausstieg_nicht_wird_aber_pro
 # --- Verdrahtung mit dem echten Versand-Engpass (ohne B-6) -------------------------
 
 
-async def test_mit_echtem_versandengpass_laeuft_bis_an_die_b6_wand(
-    mit_schluessel, session, market, prices, strategy, portfolio, btc
+async def test_mit_echtem_versandengpass_sendet_jetzt_wirklich_an_okx_demo(
+    mit_schluessel, session, market, prices, strategy, portfolio, btc, monkeypatch
 ):
-    """Bis B-6 (OKX-Orderpfad) existiert, kann -- wie bei jedem anderen HED-36-Kind --
-    selbst eine bestandene Prüfkette keine Order wirklich senden (HED-42)."""
+    """B-6 (HED-76) hat die B6-Wand aus HED-42 für die Papier-Betriebsart geschlossen:
+    die echte Prüfkette (Versand-Engpass + B-2 über ``baue_versandengpass``) erreicht
+    jetzt den echten OKX-Demo-Orderpfad statt eines ``NotImplementedError``. Kein
+    Netzwerkzugriff hier -- ``platziere_order`` wird ersetzt, der Netzwerkteil ist in
+    tests/test_okx_demo.py abgedeckt."""
+    from app.trading.papier import okx_demo
     from app.trading.stufe2 import baue_versandengpass
+
+    async def gefaelschtes_platzieren(_credential, _order):
+        return "okx-demo-order-auto-exit"
+
+    monkeypatch.setattr(okx_demo, "platziere_order", gefaelschtes_platzieren)
 
     await _setze_position(session, portfolio.id, btc, "0.01")
     engpass = baue_versandengpass(market)
 
-    with pytest.raises(NotImplementedError):
-        await fuehre_automatischen_ausstieg_aus(
-            session, market, engpass, _signal(strategy.id, side="sell", size=D("0.01"))
-        )
+    ergebnis = await fuehre_automatischen_ausstieg_aus(
+        session, market, engpass, _signal(strategy.id, side="sell", size=D("0.01"))
+    )
+
+    assert ergebnis.eintrag.result == "versandt"
