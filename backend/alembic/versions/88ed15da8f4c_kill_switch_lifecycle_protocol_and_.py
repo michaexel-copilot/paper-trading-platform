@@ -1,7 +1,7 @@
 """kill switch lifecycle protocol and suppressed proposal log
 
 Revision ID: 88ed15da8f4c
-Revises: b6d30c60657b
+Revises: 1944e7213ac8
 Create Date: 2026-10-11 10:46:59.040482
 
 """
@@ -15,7 +15,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "88ed15da8f4c"
-down_revision: str | Sequence[str] | None = "b6d30c60657b"
+down_revision: str | Sequence[str] | None = "1944e7213ac8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
