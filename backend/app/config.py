@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     # explizit auf True setzen -- siehe Issue-Kommentar HED-42 zur offenen Rückfrage,
     # ob dieser Default so richtig ist.
     enforce_startgatter: bool = False
+    # B-2 Stufe 1/2 (HED-44): welche Tranche aus Risikopolitik Abschnitt 4 (HED-8) als
+    # freigegeben gilt -- eine Board-Entscheidung (HED-8 Abschnitt 9.1), keine
+    # Risikozahl. Default B1: die kleinste, strengste Tranche, passend zum Start von
+    # Gate B. Eine Freischaltung von B2/B3 ist ein eigener Board-Beschluss, kein
+    # Konfigurations-Default.
+    freigegebene_tranche: str = "B1"
 
     def chains(self) -> dict[str, list[str]]:
         return {
