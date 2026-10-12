@@ -34,6 +34,8 @@ def _basiskontext(**overrides) -> RisikoKontext:
         risiko_je_trade_eur=D(40),
         positionsgroesse_implizierte_obergrenze=D(1000),
         proposal_size=D("0.01"),
+        nachkauf_in_verlust_pruefbar=False,
+        position_unrealized_vor_trade_eur=None,
     )
     felder.update(overrides)
     return RisikoKontext(**felder)
@@ -60,7 +62,7 @@ def test_vollstaendig_konformer_kontext_bricht_trotzdem_am_ersten_nicht_verdraht
         "brutto_exposure", "hebel", "short_verbot", "summenrisiko",
         "drawdown_vom_hoechststand", "tagesverlust", "verlust_7_tage",
         "kalendermonatsverlust", "harte_kapitalgrenze",
-        "korrelierte_gruppe", "offene_positionen_zahl",
+        "korrelierte_gruppe", "offene_positionen_zahl", "nachkauf_in_verlust",
     }
     for name in berechnete_namen:
         ergebnis = _ergebnis(ergebnisse, name)
@@ -68,7 +70,7 @@ def test_vollstaendig_konformer_kontext_bricht_trotzdem_am_ersten_nicht_verdraht
     # Mindestens ein nicht verdrahtetes Limit ist vorhanden und gebrochen.
     assert "mindest_barbestand" in gebrochene
     nicht_berechenbare = [e for e in ergebnisse if not e.berechenbar]
-    assert len(nicht_berechenbare) >= 15  # vollständige Liste in app.risikolimits
+    assert len(nicht_berechenbare) >= 17  # vollständige Liste in app.risikolimits
 
 
 def test_jedes_limit_kommt_genau_einmal_vor():
@@ -200,3 +202,42 @@ def test_long_besteht_short_verbot():
     ctx = _basiskontext(direction="long")
     ergebnis = _ergebnis(pruefe_alle_limits(ctx), "short_verbot")
     assert ergebnis.gebrochen is False
+
+
+# --- Nachkaufen in den Verlust, HED-8 Tabelle 4.2 (HED-66) --------------------------------
+
+
+def test_nachkauf_in_verlust_bei_entry_oder_unpassender_erhoehung_ist_trivial_unbroken():
+    """``nachkauf_in_verlust_pruefbar=False`` deckt sowohl Entry als auch eine Erhöhung
+    ohne passende Position ab -- Schritt 1.13 lehnt letzteren Fall ohnehin gesondert ab."""
+    ctx = _basiskontext(nachkauf_in_verlust_pruefbar=False, position_unrealized_vor_trade_eur=None)
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "nachkauf_in_verlust")
+    assert ergebnis.berechenbar is True
+    assert ergebnis.gebrochen is False
+
+
+def test_nachkauf_in_verlust_bei_positivem_ergebnis_besteht():
+    ctx = _basiskontext(
+        nachkauf_in_verlust_pruefbar=True, position_unrealized_vor_trade_eur=D(10)
+    )
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "nachkauf_in_verlust")
+    assert ergebnis.berechenbar is True
+    assert ergebnis.gebrochen is False
+
+
+def test_nachkauf_in_verlust_bei_negativem_ergebnis_ist_gebrochen():
+    ctx = _basiskontext(
+        nachkauf_in_verlust_pruefbar=True, position_unrealized_vor_trade_eur=D(-10)
+    )
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "nachkauf_in_verlust")
+    assert ergebnis.berechenbar is True
+    assert ergebnis.gebrochen is True
+
+
+def test_nachkauf_in_verlust_nicht_berechenbar_ohne_kurs():
+    ctx = _basiskontext(
+        nachkauf_in_verlust_pruefbar=True, position_unrealized_vor_trade_eur=None
+    )
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "nachkauf_in_verlust")
+    assert ergebnis.berechenbar is False
+    assert ergebnis.gebrochen is True  # Festlegung 6.1.3

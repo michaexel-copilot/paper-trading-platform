@@ -110,6 +110,15 @@ class RisikoKontext:
     risiko_je_trade_eur: Decimal | None
     positionsgroesse_implizierte_obergrenze: Decimal | None
     proposal_size: Decimal
+    # HED-8 Tabelle 4.2 "Nachkaufen in den Verlust": nur einschlägig, wenn dieser
+    # Vorschlag eine Erhöhung einer bestehenden Position gleicher Richtung ist --
+    # ``False`` bei Entry oder bei einer Erhöhung ohne passende Position (Schritt
+    # 1.13 fängt letzteren Fall ohnehin gesondert ab, hier dann trivial unbroken).
+    nachkauf_in_verlust_pruefbar: bool
+    # Unrealisiertes Ergebnis der bestehenden Position vor diesem Trade, in der
+    # Basiswährung des Portfolios. ``None`` nur wenn ``nachkauf_in_verlust_pruefbar``
+    # und der Kurs der bestehenden Position nicht lesbar ist (fail closed).
+    position_unrealized_vor_trade_eur: Decimal | None
 
 
 def _risiko_je_trade(ctx: RisikoKontext) -> LimitErgebnis:
@@ -280,6 +289,32 @@ def _korrelation_zu_offenen_positionen(ctx: RisikoKontext) -> LimitErgebnis:
     )
 
 
+def _nachkauf_in_verlust(ctx: RisikoKontext) -> LimitErgebnis:
+    """HED-8 Tabelle 4.2 "Nachkaufen in den Verlust": verboten -- eine Erhöhung einer
+    bestehenden Position gleicher Richtung, während diese Position vor dem Trade ein
+    negatives unrealisiertes Ergebnis hat (Averaging-Down)."""
+    if not ctx.nachkauf_in_verlust_pruefbar:
+        return LimitErgebnis(
+            "nachkauf_in_verlust", berechenbar=True, gebrochen=False, auslastung_pct=Decimal(0),
+            begruendung="Kein Nachkauf einer bestehenden Position gleicher Richtung (Entry, "
+            "oder Erhöhung ohne passende Position -- das fängt Schritt 1.13 gesondert ab), "
+            "HED-8 Tabelle 4.2",
+        )
+    if ctx.position_unrealized_vor_trade_eur is None:
+        return _nicht_berechenbar(
+            "nachkauf_in_verlust",
+            "Kurs der bestehenden Position nicht lesbar, unrealisiertes Ergebnis vor dem "
+            "Trade unbekannt",
+        )
+    gebrochen = ctx.position_unrealized_vor_trade_eur < 0
+    return LimitErgebnis(
+        "nachkauf_in_verlust", berechenbar=True, gebrochen=gebrochen,
+        auslastung_pct=HUNDERT if gebrochen else Decimal(0),
+        begruendung="Nachkaufen (Erhöhen) einer Position mit negativem unrealisiertem "
+        "Ergebnis vor dem Trade verboten, HED-8 Tabelle 4.2",
+    )
+
+
 def _offene_positionen_zahl(ctx: RisikoKontext) -> LimitErgebnis:
     grenze = {"B1": 4, "B2": 6, "B3": 8}.get(ctx.tranche)
     if grenze is None:
@@ -352,6 +387,16 @@ _NICHT_VERDRAHTETE_LIMITS: tuple[tuple[str, str], ...] = (
     ("wochenend_halbe_positionsgroesse",
      "Keine Kalenderprüfung 'Sa/So' mit automatischer Halbierung der Positionsgröße vor "
      "der Risikoprüfung"),
+    ("verbotenes_universum_historie",
+     "HED-8 Tabelle 'Verbotenes Universum' (Fassung 1.4 Abschnitt 4.4 Liquidität): Werte "
+     "ohne durchgehende 12-Monats-Historie verbieten. Kein Erstnotierungsdatum im "
+     "Asset-Katalog gespeichert (app.models.assets.Asset hat kein listed_since-Feld, "
+     "dieselbe Lücke wie bei liquiditaet_volumen_marktkapitalisierung) -- 12 Monate "
+     "durchgehende Historie ist ohne dieses Feld nicht prüfbar"),
+    ("verbotenes_universum_rueckzahlungsbeschraenkung",
+     "Dieselbe Tabellenzeile: Produkte mit Rückzahlungsbeschränkung verbieten. Kein Feld "
+     "im Asset-Katalog, das eine Rückzahlungs-/Redemption-Beschränkung je Produkt festhält "
+     "(app.models.assets.Asset)"),
 )
 
 
@@ -378,6 +423,7 @@ _BERECHNETE_PRUEFUNGEN = (
     _harte_kapitalgrenze,
     _korrelation_zu_offenen_positionen,
     _offene_positionen_zahl,
+    _nachkauf_in_verlust,
 )
 
 
