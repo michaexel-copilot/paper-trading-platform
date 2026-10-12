@@ -19,6 +19,13 @@ export type PreviewIn = Schemas['PreviewIn']
 export type Preview = Schemas['PreviewOut']
 export type Trade = Schemas['TradeOut']
 
+export type Proposal = Schemas['ProposalOut']
+export type LockState = Schemas['LockStateOut']
+export type ApproveIn = Schemas['ApproveIn']
+export type ChangeIn = Schemas['ChangeIn']
+export type DiscardIn = Schemas['DiscardIn']
+export type DashboardStatus = Schemas['DashboardStatusOut']
+
 export const ASSET_CLASSES = ['crypto', 'stocks', 'etfs', 'commodities', 'forex'] as const
 export type AssetClass = (typeof ASSET_CLASSES)[number]
 

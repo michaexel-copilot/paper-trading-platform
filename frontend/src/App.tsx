@@ -3,6 +3,7 @@ import { useSession, useUser } from './auth'
 import RequireAuth from './components/RequireAuth'
 import AssetPage from './pages/AssetPage'
 import AssetsPage from './pages/AssetsPage'
+import DashboardPage from './pages/DashboardPage'
 import LoginPage from './pages/LoginPage'
 import PortfolioPage from './pages/PortfolioPage'
 import PortfoliosPage from './pages/PortfoliosPage'
@@ -22,6 +23,7 @@ function Layout() {
       <header className="topbar">
         <span className="brand">Paper Trading</span>
         <nav>
+          <NavLink to="/dashboard">Dashboard</NavLink>
           <NavLink to="/portfolios">Portfolios</NavLink>
           <NavLink to="/assets">Assets</NavLink>
         </nav>
@@ -53,6 +55,8 @@ export default function App() {
           </RequireAuth>
         }
       >
+        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/dashboard/proposals/:proposalId" element={<DashboardPage />} />
         <Route path="/portfolios" element={<PortfoliosPage />} />
         <Route path="/portfolios/:portfolioId" element={<PortfolioPage />} />
         <Route path="/assets" element={<AssetsPage />} />

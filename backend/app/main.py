@@ -5,8 +5,9 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from sqlalchemy import select
 
-from app.api import assets, auth, market, orders, portfolios
+from app.api import assets, auth, dashboard, market, orders, portfolios
 from app.catalog import check_all_assets, make_price_recorder, seed_assets
 from app.config import Settings, get_settings
 from app.db import make_engine, make_session_factory
@@ -15,6 +16,9 @@ from app.marketdata.ccxt_adapter import CcxtSource
 from app.marketdata.router import SourceRouter
 from app.marketdata.service import MarketService
 from app.marketdata.yahoo_adapter import YahooSource
+from app.models import BoardNotification, Proposal
+from app.models.proposals import STATE_WARTET_AUF_BOARD
+from app.notify import notify_new_proposal
 from app.schluessel import pruefe_schluesseltrennung_beim_start
 from app.startgatter import pruefe_installation_marker, pruefe_matcher_fuer_live_artefakt
 from app.trading.matcher import Matcher, ProcessLock
@@ -64,6 +68,32 @@ async def _expire_overdue_proposals_loop(session_factory) -> None:
         except Exception:
             log.exception("Vorschlag-Fristwächter fehlgeschlagen")
         await asyncio.sleep(FRISTWAECHTER_INTERVAL_SECONDS)
+
+
+async def _notify_new_proposals(session_factory, settings: Settings) -> None:
+    """Board-Benachrichtigung je Vorschlag, der neu in Z3 steht (HED-43, Entwurf 5.3).
+
+    Einziger Baustein, der diese Mails versendet (parallel zum Matcher, unter demselben
+    ``run_matcher``-Prozesslauf) -- so entsteht bei mehreren Prozessen derselben
+    Installation kein doppelter Versand. ``notify_new_proposal`` legt die
+    ``BoardNotification``-Zeile selbst transaktional an, bevor sie sendet, und ist damit
+    auch gegen zwei sich überlappende Durchläufe dieser Schleife sicher.
+    """
+    while True:
+        try:
+            async with session_factory() as session:
+                already_notified = select(BoardNotification.proposal_id)
+                pending = await session.scalars(
+                    select(Proposal.id)
+                    .where(Proposal.state == STATE_WARTET_AUF_BOARD)
+                    .where(Proposal.id.not_in(already_notified))
+                )
+                proposal_ids = list(pending)
+            for proposal_id in proposal_ids:
+                await notify_new_proposal(session_factory, settings, proposal_id)
+        except Exception:
+            log.exception("Board-Benachrichtigung fehlgeschlagen")
+        await asyncio.sleep(settings.notify_poll_seconds)
 
 
 def create_app(settings: Settings | None = None, market_service: MarketService | None = None):
@@ -117,6 +147,7 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
             background.append(asyncio.create_task(_expire_overdue_proposals_loop(session_factory)))
         if settings.run_matcher:
             matcher.start()
+            background.append(asyncio.create_task(_notify_new_proposals(session_factory, settings)))
         try:
             yield
         finally:
@@ -136,7 +167,7 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    for module in (auth, assets, market, portfolios, orders):
+    for module in (auth, assets, market, portfolios, orders, dashboard):
         app.include_router(module.router)
 
     _serve_frontend(app, (BACKEND_DIR / settings.frontend_dist).resolve())

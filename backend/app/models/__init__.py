@@ -2,6 +2,8 @@ from app.models.accounts import LoginAttempt, User, UserSession
 from app.models.assets import Asset, AssetSourceSymbol
 from app.models.auto_exit import AutoExitLogEntry
 from app.models.base import Base
+from app.models.board_notifications import BoardNotification
+from app.models.dashboard_audit import ProposalActionAttempt
 from app.models.fees import FeeProfile, PortfolioFeeProfile
 from app.models.installation import InstallationMarker
 from app.models.kill_switch import SperrkennzeichenProtokoll
@@ -19,6 +21,7 @@ __all__ = [
     "AssetSourceSymbol",
     "AutoExitLogEntry",
     "Base",
+    "BoardNotification",
     "FeeProfile",
     "FirmenweitesSperrkennzeichen",
     "InstallationMarker",
@@ -29,6 +32,7 @@ __all__ = [
     "PortfolioFeeProfile",
     "Position",
     "Proposal",
+    "ProposalActionAttempt",
     "ProposalEvent",
     "SlippageMessungEintrag",
     "SperrkennzeichenProtokoll",

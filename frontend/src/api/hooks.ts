@@ -1,17 +1,27 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './client'
 import type {
+  ApproveIn,
   Asset,
+  ChangeIn,
+  DashboardStatus,
+  DiscardIn,
   FeeProfile,
   History,
   Order,
   PortfolioDetail,
   PortfolioSummary,
+  Proposal,
   Quote,
   SearchResult,
   Snapshot,
   Trade,
 } from './types'
+
+// Ein Vorschlag kann jederzeit verfallen oder von einem anderen Board-Mitglied
+// entschieden werden -- das Dashboard pollt entsprechend häufig (HED-43 Entwurf 5.2:
+// Restzeit "live mitlaufend").
+export const DASHBOARD_POLL_MS = 10_000
 
 // Crypto quotes change every few seconds; everything else is cached for a minute upstream.
 export const CRYPTO_POLL_MS = 5_000
@@ -128,4 +138,45 @@ export function usePortfolioFeeProfiles(portfolioId: number) {
     queryKey: ['portfolio', portfolioId, 'fee-profiles'],
     queryFn: () => api<Record<string, FeeProfile>>(`/api/portfolios/${portfolioId}/fee-profiles`),
   })
+}
+
+// --- dashboard (HED-43) -------------------------------------------------------
+
+export function useDashboardQueue() {
+  return useQuery({
+    queryKey: ['dashboard', 'proposals'],
+    queryFn: () => api<Proposal[]>('/api/dashboard/proposals'),
+    refetchInterval: DASHBOARD_POLL_MS,
+  })
+}
+
+export function useDashboardStatus() {
+  return useQuery({
+    queryKey: ['dashboard', 'status'],
+    queryFn: () => api<DashboardStatus>('/api/dashboard/status'),
+    refetchInterval: DASHBOARD_POLL_MS,
+  })
+}
+
+function useDashboardAction<Body>(action: 'approve' | 'change' | 'discard') {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ proposalId, body }: { proposalId: number; body: Body }) =>
+      api<Proposal>(`/api/dashboard/proposals/${proposalId}/${action}`, { method: 'POST', body }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
+}
+
+export function useApproveProposal() {
+  return useDashboardAction<ApproveIn>('approve')
+}
+
+export function useChangeProposal() {
+  return useDashboardAction<ChangeIn>('change')
+}
+
+export function useDiscardProposal() {
+  return useDashboardAction<DiscardIn>('discard')
 }

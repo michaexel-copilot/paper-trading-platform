@@ -42,6 +42,25 @@ class Settings(BaseSettings):
     # Konfigurations-Default.
     freigegebene_tranche: str = "B1"
 
+    # Board-Benachrichtigung (HED-43, Entwurf 5.3): E-Mail an die Board-Verteilerliste je
+    # Vorschlag in Z3. Nur Python-Standardbibliothek (smtplib) -- bewusst kein
+    # Drittanbieter-Versanddienst, um die Prüfkarte aus Anhang A zu vermeiden (Entwurf
+    # 5.3.1). Leere board_notify_emails deaktiviert den Versand nicht; ein Versuch ohne
+    # Empfänger gilt als Fehler und zählt in den Wiederholungs-/Fehlerpfad.
+    smtp_host: str = "localhost"
+    smtp_port: int = 25
+    smtp_starttls: bool = False
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str = "dashboard@hedgeclip.local"
+    board_notify_emails: str = ""
+    cro_alert_email: str = ""
+    dashboard_base_url: str = ""
+    notify_poll_seconds: int = 15
+
+    def board_notify_email_list(self) -> list[str]:
+        return [addr.strip() for addr in self.board_notify_emails.split(",") if addr.strip()]
+
     def chains(self) -> dict[str, list[str]]:
         return {
             cls: [s.strip() for s in getattr(self, f"chain_{cls}").split(",") if s.strip()]
