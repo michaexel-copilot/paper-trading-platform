@@ -3,11 +3,17 @@
 Umsetzung von HED-36 Entwurf Fassung 1.1, Abschnitt 4 (CRO-freigegeben), siehe HED-41.
 Die Doppelprüfung der Sperrkennzeichen vor Z0 (Abschnitt 9.2, erster Prüfpunkt) ist
 HED-47 -- siehe ``create_proposal`` unten.
+Die Verfallslogik (Abschnitt 7) ist HED-45 -- siehe ``transition`` (Fristsetzung bei Z3,
+Grenzfall-Selbstheilung), ``verfalle_ueberfaellige_vorschlaege`` (Fristwächter,
+Durchsetzung Punkt 1) und ``ist_frist_abgelaufen`` (für Stufe-2-Schritt-2.3,
+Durchsetzung Punkt 2).
 
 Bewusst außerhalb dieses Umfangs (andere HED-36-Kinder):
 - Doppelprüfung vor Stufe 2, Schritt 2.4 -- HED-44 (noch nicht gebaut), ruft dort
   dieselbe ``app.sperrkennzeichen.doppelpruefung_offen`` auf wie hier.
 - Stufe-1-/Stufe-2-B-2-Prüfung selbst (Limit-Berechnung, Kursfrische, Preisband) -- HED-44.
+  Schritt 2.3 (Fristprüfung vor Versand, Entwurf 7.1 Durchsetzung Punkt 2) ruft dort
+  ``ist_frist_abgelaufen`` unten auf.
 - Versand an die Gegenstelle -- HED-42 (dritter, verbindlicher Prüfpunkt, bereits verdrahtet).
 - Dashboard-Darstellung -- HED-36 Abschnitt 5.
 
@@ -18,6 +24,7 @@ auf ``Strategy`` einzuführen ist außerhalb dieses Umfangs, solange keine zweit
 Verwendung das verlangt.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -25,11 +32,13 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import SessionFactory
 from app.dbtypes import utcnow
 from app.models.proposals import (
     ALLOWED_TRANSITIONS,
     STATE_ENTSTANDEN,
     STATE_TO_LOG_CATEGORY,
+    STATE_VERFALLEN,
     STATE_WARTET_AUF_BOARD,
     Proposal,
     ProposalEvent,
@@ -38,11 +47,30 @@ from app.models.strategies import Strategy
 from app.models.vorschlag_unterdrueckung import VorschlagUnterdrueckt
 from app.sperrkennzeichen import ist_firmenweit_gesperrt, ist_strategie_gesperrt
 
+log = logging.getLogger(__name__)
+
 PROPOSAL_VALIDITY = timedelta(hours=2)
+# Entwurf 7.1, Durchsetzung Punkt 1: "höchstens 30 Sekunden".
+FRISTWAECHTER_INTERVAL_SECONDS = 30
 
 
 class InvalidTransition(ValueError):
     """Ein Übergang, der nicht in ALLOWED_TRANSITIONS steht (Tabelle 4.2)."""
+
+
+def ist_frist_abgelaufen(proposal: Proposal, *, now: datetime | None = None) -> bool:
+    """Reine Fristprüfung gegen den eingefrorenen Verfalls-Zeitpunkt, unabhängig vom
+    aktuellen ``proposal.state`` (Entwurf 7.1, Durchsetzung Punkt 2 -- Stufe-2-Schritt-2.3,
+    HED-44, noch nicht gebaut: letzte Prüfstelle unmittelbar vor Versand).
+
+    Ein Vorschlag ohne ``expires_at`` (noch nicht in Z3 gewesen) ist nicht abgelaufen.
+    Grenzfall ohne Kulanzspanne (Entwurf 7.1): abgelaufen bedeutet "nach" dem
+    gespeicherten Zeitpunkt, nicht "ab" ihm -- am exakten Zeitpunkt selbst ist die Frist
+    noch nicht verstrichen.
+    """
+    if proposal.expires_at is None:
+        return False
+    return (now or utcnow()) > proposal.expires_at
 
 
 @dataclass(frozen=True)
@@ -202,7 +230,30 @@ async def transition(
     `log_category` wird nie vom Aufrufer übergeben, sondern aus dem Zielzustand
     abgeleitet (STATE_TO_LOG_CATEGORY, Entwurf 8.2) -- so kann kein Übergang versehentlich
     in eine falsche oder in gar keine Kategorie fallen (Testfälle 4/5, HED-46 Abschnitt 8).
+
+    Grenzfall Fristablauf (Entwurf 7.1, "Behandlung eines Grenzfalls" und Festlegung
+    5.2.3): Ist der Vorschlag noch formal in Z3, aber die gespeicherte Frist bereits
+    abgelaufen -- weil der periodische Fristwächter (``verfalle_ueberfaellige_vorschlaege``)
+    noch nicht gelaufen ist --, wird hier zuerst der Verfall selbst nachgeholt (Z3 -> Z4,
+    Akteur ``system_frist``, wie beim regulären Fristwächter-Lauf). Der ursprünglich
+    angeforderte Übergang (z. B. Freigeben) wird danach gegen den jetzt korrekten Zustand
+    Z4 geprüft und als ``InvalidTransition`` abgelehnt -- das ist der im Entwurf verlangte
+    "Zustandshinweis". Es gibt bewusst keine Kulanzspanne: maßgeblich ist, ob dieser
+    Aufruf nach dem gespeicherten Verfalls-Zeitpunkt verarbeitet wird.
     """
+    if (
+        proposal.state == STATE_WARTET_AUF_BOARD
+        and new_state != STATE_VERFALLEN
+        and ist_frist_abgelaufen(proposal)
+    ):
+        await transition(
+            session,
+            proposal,
+            STATE_VERFALLEN,
+            actor="system_frist",
+            reason="2h ohne Entscheidung",
+        )
+
     allowed = ALLOWED_TRANSITIONS.get(proposal.state, frozenset())
     if new_state not in allowed:
         raise InvalidTransition(
@@ -211,6 +262,13 @@ async def transition(
 
     from_state = proposal.state
     proposal.state = new_state
+
+    if new_state == STATE_WARTET_AUF_BOARD:
+        # Entwurf 7.1: Startpunkt der 2-Stunden-Frist ist der Anzeige-Zeitpunkt (Z3),
+        # nicht Signal- oder Stufe-1-Zeitpunkt. Einmal berechnet, danach unveränderlich
+        # (kein weiterer Schreibzugriff auf diese zwei Felder in dieser Funktion).
+        proposal.displayed_at = utcnow()
+        proposal.expires_at = proposal.displayed_at + PROPOSAL_VALIDITY
 
     # Z3 "wartet_auf_board" ist der einzige Entscheidungspunkt des Boards (Freigeben,
     # Ändern, Verwerfen) bzw. des Fristablaufs -- unabhängig davon, ob der Zielzustand
@@ -300,3 +358,44 @@ async def board_change(
         )
     )
     return child
+
+
+async def verfalle_ueberfaellige_vorschlaege(session_factory: SessionFactory) -> list[int]:
+    """Fristwächter (Entwurf 7.1, Durchsetzung Punkt 1): läuft im Intervall
+    ``FRISTWAECHTER_INTERVAL_SECONDS`` (Aufrufer, siehe ``app.main``) und setzt jeden
+    Vorschlag in Z3, dessen gespeicherter Verfalls-Zeitpunkt in der Vergangenheit liegt,
+    auf Z4 `verfallen`.
+
+    Das ist die Stelle, die das Dashboard aufräumt. Verbindlich -- falls dieser Lauf
+    ausfällt oder sich verzögert -- ist Schritt 2.3 in Stufe 2 (``ist_frist_abgelaufen``,
+    HED-44), nicht dieser Sweep.
+
+    Ein Fehler bei einem einzelnen Vorschlag darf die anderen nicht blockieren (gleiche
+    Begründung wie ``check_all_assets`` in ``app.catalog``). Gibt die Kennungen der
+    verfallenen Vorschläge zurück, zum Protokollieren und für Tests.
+    """
+    now = utcnow()
+    async with session_factory() as session:
+        proposals = list(
+            await session.scalars(
+                select(Proposal).where(
+                    Proposal.state == STATE_WARTET_AUF_BOARD,
+                    Proposal.expires_at < now,
+                )
+            )
+        )
+        expired_ids: list[int] = []
+        for proposal in proposals:
+            try:
+                await transition(
+                    session,
+                    proposal,
+                    STATE_VERFALLEN,
+                    actor="system_frist",
+                    reason="2h ohne Entscheidung",
+                )
+                expired_ids.append(proposal.id)
+            except Exception:
+                log.exception("Fristwächter: Verfall von Vorschlag %s fehlgeschlagen", proposal.id)
+        await session.commit()
+    return expired_ids

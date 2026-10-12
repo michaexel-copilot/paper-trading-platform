@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     auto_migrate: bool = True
     run_matcher: bool = True
     check_assets_on_startup: bool = True
+    # Fristwächter für Vorschläge (HED-45, Entwurf 7.1 Durchsetzung Punkt 1). Verbindlich
+    # ist Stufe-2-Schritt-2.3 (HED-44), nicht dieser Sweep -- siehe
+    # app.trading.proposals.verfalle_ueberfaellige_vorschlaege.
+    check_proposal_expiry_on_startup: bool = True
     lock_file: str = "./data/backend.lock"
     frontend_dist: str = "../frontend/dist"
     # Auflage 1/4 Startgatter (HED-36 Abschnitt 3.1, 3.4). Default AUS: diese Plattform

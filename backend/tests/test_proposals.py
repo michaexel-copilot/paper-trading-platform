@@ -5,14 +5,15 @@ siehe Dokument "spezifikation" auf HED-41) sowie die Unveränderlichkeits-Invari
 Festlegung 4.4.6 ab.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
 
 from app.db import make_engine, make_session_factory
-from app.models import Base, ProposalEvent, Strategy
+from app.dbtypes import utcnow
+from app.models import Base, Proposal, ProposalEvent, Strategy
 from app.models.proposals import (
     STATE_BOARD_FREIGEGEBEN,
     STATE_BOARD_GEAENDERT,
@@ -29,11 +30,14 @@ from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen, StrategieS
 from app.models.vorschlag_unterdrueckung import VorschlagUnterdrueckt
 from app.sperrkennzeichen import ist_firmenweit_gesperrt, ist_strategie_gesperrt
 from app.trading.proposals import (
+    PROPOSAL_VALIDITY,
     InvalidTransition,
     Signal,
     board_change,
     create_proposal,
+    ist_frist_abgelaufen,
     transition,
+    verfalle_ueberfaellige_vorschlaege,
 )
 
 
@@ -42,13 +46,18 @@ def _url(tmp_path) -> str:
 
 
 @pytest.fixture
-async def session(tmp_path):
+async def session_factory(tmp_path):
     engine = make_engine(_url(tmp_path))
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
-    async with make_session_factory(engine)() as db:
-        yield db
+    yield make_session_factory(engine)
     await engine.dispose()
+
+
+@pytest.fixture
+async def session(session_factory):
+    async with session_factory() as db:
+        yield db
 
 
 @pytest.fixture(autouse=True)
@@ -490,3 +499,168 @@ async def test_neue_strategie_waehrend_firmenweiter_sperre_bleibt_blockiert(sess
     assert unterdrueckt.grund == "firmenweites_kennzeichen_gesetzt"
     # Die Neuanlage hat die firmenweite Sperre nicht aufgehoben.
     assert await ist_firmenweit_gesperrt(session) is True
+
+
+# --- HED-45: Verfallslogik (Entwurf Abschnitt 7) -----------------------------------------
+
+
+async def _bis_z3(session, proposal):
+    await transition(session, proposal, STATE_STUFE1_LAEUFT, actor="system")
+    await transition(session, proposal, STATE_WARTET_AUF_BOARD, actor="system")
+    return proposal
+
+
+async def test_erreichen_von_z3_setzt_anzeige_und_verfallszeitpunkt(session):
+    """7.1: Startpunkt der Frist ist der Anzeige-Zeitpunkt (Z3), nicht Signal- oder
+    Stufe-1-Zeitpunkt; die Frist ist genau 2 Stunden."""
+    strategy = await make_strategy(session, "S3")
+    proposal = await create_proposal(session, make_signal(strategy.id), mode="paper")
+    vor_anzeige = utcnow()
+
+    await _bis_z3(session, proposal)
+    await session.commit()
+
+    assert proposal.displayed_at is not None
+    assert proposal.displayed_at >= vor_anzeige
+    assert proposal.expires_at == proposal.displayed_at + PROPOSAL_VALIDITY
+
+
+async def test_fristwaechter_verfallt_ueberfaelligen_vorschlag_mit_system_frist(
+    session, session_factory
+):
+    """Durchsetzung Punkt 1 (7.1): der periodische Sweep setzt Z3 -> Z4, sobald der
+    gespeicherte Verfalls-Zeitpunkt in der Vergangenheit liegt; Kategorie board_decision,
+    Entscheider system_frist (Testfall 3, bereits in HED-46 für den Zielzustand
+    geprüft -- hier wird geprüft, dass der Sweep selbst diesen Übergang auslöst)."""
+    strategy = await make_strategy(session, "S3")
+    proposal = await create_proposal(session, make_signal(strategy.id), mode="paper")
+    await _bis_z3(session, proposal)
+    proposal.expires_at = utcnow() - timedelta(seconds=1)
+    await session.commit()
+
+    expired_ids = await verfalle_ueberfaellige_vorschlaege(session_factory)
+
+    assert expired_ids == [proposal.id]
+    await session.refresh(proposal)
+    assert proposal.state == STATE_VERFALLEN
+    assert proposal.decided_by == "system_frist"
+    assert proposal.log_category == "board_decision"
+    events = await events_of(session, proposal.id)
+    assert events[-1].to_state == STATE_VERFALLEN
+    assert events[-1].actor == "system_frist"
+    assert events[-1].reason == "2h ohne Entscheidung"
+
+
+async def test_fristwaechter_laesst_nicht_abgelaufenen_vorschlag_in_z3(session, session_factory):
+    """Gegenprobe: ein Vorschlag innerhalb der 2-Stunden-Frist wird vom Sweep nicht
+    angefasst."""
+    strategy = await make_strategy(session, "S3")
+    proposal = await create_proposal(session, make_signal(strategy.id), mode="paper")
+    await _bis_z3(session, proposal)
+    await session.commit()
+
+    expired_ids = await verfalle_ueberfaellige_vorschlaege(session_factory)
+
+    assert expired_ids == []
+    await session.refresh(proposal)
+    assert proposal.state == STATE_WARTET_AUF_BOARD
+
+
+async def test_freigabe_nach_ablauf_aber_vor_fristwaechter_wird_abgelehnt(session):
+    """Grenzfall (7.1): Der Fristwächter ist noch nicht gelaufen, der Vorschlag ist
+    formal noch in Z3, aber der gespeicherte Verfalls-Zeitpunkt liegt bereits in der
+    Vergangenheit. Die eingehende Freigabe-Aktion wird abgelehnt (Zustandshinweis), der
+    Vorschlag heilt dabei selbst auf Z4 -- keine Kulanzspanne, keine stille Ausführung."""
+    strategy = await make_strategy(session, "S3")
+    proposal = await create_proposal(session, make_signal(strategy.id), mode="paper")
+    await _bis_z3(session, proposal)
+    proposal.expires_at = utcnow() - timedelta(seconds=1)
+    await session.commit()
+
+    with pytest.raises(InvalidTransition):
+        await transition(
+            session,
+            proposal,
+            STATE_BOARD_FREIGEGEBEN,
+            actor="board:alice",
+            board_action="approve",
+        )
+
+    assert proposal.state == STATE_VERFALLEN
+    assert proposal.decided_by == "system_frist"
+    events = await events_of(session, proposal.id)
+    assert events[-1].to_state == STATE_VERFALLEN
+    assert events[-1].reason == "2h ohne Entscheidung"
+    # Die abgelehnte Freigabe selbst schreibt keinen eigenen Eintrag.
+    assert all(event.actor != "board:alice" for event in events)
+
+
+async def test_keine_automatische_wiedervorlage_nach_verfall(session, session_factory):
+    """7.1: ein verfallener Vorschlag erzeugt keinen neuen Vorschlag, weder sofort noch
+    später -- anders als Z6 board_geaendert (board_change), das bewusst einen neuen
+    Datensatz anlegt."""
+    strategy = await make_strategy(session, "S3")
+    proposal = await create_proposal(session, make_signal(strategy.id), mode="paper")
+    await _bis_z3(session, proposal)
+    proposal.expires_at = utcnow() - timedelta(seconds=1)
+    await session.commit()
+
+    await verfalle_ueberfaellige_vorschlaege(session_factory)
+    session.expire_all()
+
+    alle = list(await session.scalars(select(Proposal)))
+    assert len(alle) == 1
+    assert alle[0].id == proposal.id
+    assert alle[0].state == STATE_VERFALLEN
+
+
+async def test_board_aenderung_erzeugt_eigene_frische_frist_fuer_das_kind(session):
+    """7.2: Die 2-Stunden-Frist startet für den neuen (geänderten) Vorschlag neu, ab
+    seinem eigenen Anzeige-Zeitpunkt -- unabhängig von der Frist des Vorgängers, die
+    unverändert bleibt."""
+    strategy = await make_strategy(session, "S3")
+    parent = await create_proposal(session, make_signal(strategy.id), mode="paper")
+    await _bis_z3(session, parent)
+    parent_expires_at = parent.expires_at
+    await session.commit()
+
+    child = await board_change(
+        session, parent, actor="board:bob", reason="Größe angepasst", size=Decimal("0.5")
+    )
+    await _bis_z3(session, child)
+    await session.commit()
+
+    assert child.id != parent.id
+    assert child.displayed_at is not None
+    assert child.displayed_at >= parent.displayed_at
+    assert child.expires_at == child.displayed_at + PROPOSAL_VALIDITY
+    assert child.expires_at != parent_expires_at
+    # Der Vorgänger bleibt in Z6, seine eigene (abgelaufene Logik-lose) Frist unberührt.
+    assert parent.state == STATE_BOARD_GEAENDERT
+    assert parent.expires_at == parent_expires_at
+
+
+async def test_ist_frist_abgelaufen_ist_unabhaengig_vom_zustand(session):
+    """Stufe-2-Schritt-2.3 (Durchsetzung Punkt 2, HED-44 noch nicht gebaut): die
+    Fristprüfung muss auch dann greifen, wenn der Vorschlag die Frist-tragende Phase
+    (Z3) längst verlassen hat -- die Funktion prüft rein den gespeicherten Zeitpunkt."""
+    strategy = await make_strategy(session, "S3")
+    proposal = await create_proposal(session, make_signal(strategy.id), mode="paper")
+    assert ist_frist_abgelaufen(proposal) is False  # kein expires_at in Z0
+
+    await _bis_z3(session, proposal)
+    await transition(
+        session,
+        proposal,
+        STATE_BOARD_FREIGEGEBEN,
+        actor="board:alice",
+        board_action="approve",
+    )
+    await transition(session, proposal, STATE_STUFE2_LAEUFT, actor="system")
+    await session.commit()
+
+    assert proposal.state == STATE_STUFE2_LAEUFT
+    assert ist_frist_abgelaufen(proposal) is False
+
+    proposal.expires_at = utcnow() - timedelta(seconds=1)
+    assert ist_frist_abgelaufen(proposal) is True
