@@ -19,7 +19,6 @@ tatsächlichen Sendeversuchs kennt (``Versandengpass._sende_an_gegenstelle``, he
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dbtypes import utcnow
 from app.marketdata.base import DataUnavailable
 from app.marketdata.service import MarketService
 from app.models import Asset, AssetSourceSymbol, Portfolio, Position, Proposal, Strategy
@@ -30,7 +29,7 @@ from app.models.proposals import (
 )
 from app.preisband import innerhalb_des_bandes, jenseits_des_stops
 from app.risikolimits import LimitErgebnis, pruefe_alle_limits, tranchen_grenze
-from app.trading.proposals import transition
+from app.trading.proposals import ist_frist_abgelaufen, transition
 from app.trading.stufe1 import ProposalEingabe, sammle_kontext
 from app.trading.versandengpass import Versandengpass, VersandOrder
 
@@ -51,7 +50,7 @@ async def pruefe_freigabe_nachweis(session: AsyncSession, order: VersandOrder) -
         return False  # nicht freigegeben, bereits verwendet, oder anderer Zustand
     if proposal.approval_token is None:
         return False
-    if proposal.expires_at is not None and proposal.expires_at < utcnow():
+    if ist_frist_abgelaufen(proposal):
         return False
     if order.quantity != proposal.size:
         return False  # Nachweis gehört nicht zu dieser Order (Größe passt nicht)
