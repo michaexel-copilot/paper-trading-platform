@@ -4,15 +4,16 @@ Integrationstests gegen eine echte (SQLite-)Datenbank und gescriptete Marktdaten
 Siehe tests/test_risikolimits.py für die reinen Katalog-Tests.
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
 
-from app.models import Portfolio, Strategy
+from app.models import Portfolio, Position, Strategy
 from app.models.proposals import STATE_STUFE1_ABGELEHNT
 from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen
 from app.trading.proposals import Signal, create_proposal
-from app.trading.stufe1 import ProposalEingabe, lauf_stufe1
+from app.trading.stufe1 import ProposalEingabe, _erhoehung_hat_passende_position, lauf_stufe1
 from tests.conftest import D, asset_id, create_portfolio
 
 
@@ -219,6 +220,148 @@ async def test_stop_exakt_auf_vorschlagskurs_wird_abgelehnt(
 
     assert result.state == STATE_STUFE1_ABGELEHNT
     assert result.rejection_reason_code == "stop_falsche_seite"
+
+
+@pytest.mark.parametrize(
+    "feld,wert,erwarteter_grund_teil",
+    [
+        ("direction", "sideways", "weder long noch short"),
+        ("size", D(0), "Größe"),
+        ("size", D(-1), "Größe"),
+        ("proposal_price", D(0), "Vorschlagskurs"),
+        ("proposal_price", D(-1), "Vorschlagskurs"),
+        ("stop_price", D(0), "Stop-Kurs"),
+        ("stop_price", D(-1), "Stop-Kurs"),
+    ],
+)
+async def test_unplausibles_signal_wird_abgelehnt(
+    session, market, prices, portfolio, strategy, btc, feld, wert, erwarteter_grund_teil
+):
+    """Schritt 1.1 (HED-65): Größe/Kurse <= 0 oder eine ungültige Richtung sind durch
+    den frozen dataclass ProposalEingabe nicht abgefangen (Konstruktion gelingt
+    trotzdem) -- die explizite Plausibilitätsprüfung muss das selbst ablehnen.
+    Überschreibt das jeweilige Feld erst in der fertigen ``ProposalEingabe`` (nicht im
+    ``Signal``), weil ``create_proposal`` für ``proposal_price`` bereits selbst durch
+    null dividieren würde (``stop_distance_pct``) -- außerhalb des Umfangs hier."""
+    signal = _signal(strategy.id, btc)
+    proposal = await create_proposal(session, signal, mode="paper")
+    await session.commit()
+
+    eingabe = replace(_eingabe(signal, btc), **{feld: wert})
+    result = await lauf_stufe1(
+        session, market, strategy, proposal, eingabe, tranche="B1", tranche_eur=D(2000)
+    )
+    await session.commit()
+
+    assert result.state == STATE_STUFE1_ABGELEHNT
+    assert result.rejection_reason_code == "signal_unplausibel"
+    assert erwarteter_grund_teil in result.rejection_reason_text
+    assert result.limit_utilization is None  # vor Schritt 1.11 abgelehnt
+
+
+async def test_kurs_nicht_lesbar_wird_in_stufe1_abgelehnt(
+    session, market, sources, portfolio, strategy
+):
+    """Schritt 1.4 (HED-65): Kein Preis für das Vorschlagsinstrument gescriptet --
+    keine Quelle in der Kette (okx/kraken/yahoo) kennt BTC/USDT -- Stufe 1 muss fail
+    closed ablehnen, statt erst in sammle_kontext an einer anderen Stelle zu stolpern.
+    Nutzt bewusst ``sources`` statt der ``prices``-Fixture (über die auch die
+    ``btc``-Fixture läuft), sonst wäre für BTC/USDT längst ein Kurs gescriptet."""
+    sources["okx"].add("BTC/USDT", currency="USDT")  # Instrument bekannt, aber kein Kurs
+    btc_id = await asset_id(session, "BTC")
+    signal = _signal(strategy.id, btc_id)
+    proposal = await create_proposal(session, signal, mode="paper")
+    await session.commit()
+
+    eingabe = _eingabe(signal, btc_id)
+    result = await lauf_stufe1(
+        session, market, strategy, proposal, eingabe, tranche="B1", tranche_eur=D(2000)
+    )
+    await session.commit()
+
+    assert result.state == STATE_STUFE1_ABGELEHNT
+    assert result.rejection_reason_code == "kurs_nicht_lesbar"
+    assert result.price_age_seconds is None
+    assert result.limit_utilization is None  # vor Schritt 1.11 abgelehnt
+
+
+async def test_kurs_lesbar_setzt_price_age_seconds(
+    session, market, clock, prices, portfolio, strategy, btc
+):
+    """Positiver Gegenfall zu Schritt 1.4: ein lesbarer Kurs wird akzeptiert und das
+    Kursalter eingefroren -- unabhängig davon, ob Stufe 1 später an einem anderen
+    Limit scheitert."""
+    prices["okx"].price("BTC/USDT", 50000, observed_at=clock.current)
+    clock.advance(5)
+    signal = _signal(strategy.id, btc)
+    proposal = await create_proposal(session, signal, mode="paper")
+    await session.commit()
+
+    eingabe = _eingabe(signal, btc)
+    result = await lauf_stufe1(
+        session, market, strategy, proposal, eingabe, tranche="B1", tranche_eur=D(2000)
+    )
+    await session.commit()
+
+    assert result.price_age_seconds == 5
+
+
+@pytest.mark.parametrize(
+    "position_quantity,richtung,erwartet",
+    [
+        (None, "long", False),  # keine Position überhaupt
+        (D(0), "long", False),  # Position glattgestellt (quantity 0 zählt nicht)
+        (D("-0.01"), "long", False),  # bestehende Position in Gegenrichtung (Short)
+        (D("0.01"), "short", False),  # Spiegelfall: Long-Position, Short-Erhöhung
+        (D("0.01"), "long", True),  # passender Fall: gleiche Richtung
+        (D("-0.01"), "short", True),  # passender Fall, Short-Seite
+    ],
+)
+async def test_erhoehung_hat_passende_position(
+    session, portfolio, btc, position_quantity, richtung, erwartet
+):
+    """Schritt 1.13 (HED-65), direkter Test der Hilfsfunktion statt über den vollen
+    ``lauf_stufe1``-Pfad: Das Platzhalter-Limit ``mindest_barbestand`` (HED-8 Tabelle
+    4.1, noch nicht verdrahtet -- B-11) ist heute *immer* gebrochen (Festlegung
+    6.1.3, fail closed) und steht in der Katalogreihenfolge nach allen echten Limits,
+    aber vor Schritt 1.13 -- kein Vorschlag erreicht Schritt 1.13 je über
+    ``lauf_stufe1`` bis B-11 gebaut ist. Die Prüflogik selbst ist trotzdem jetzt
+    vorhanden und hier isoliert verifiziert, siehe auch
+    tests/test_risikolimits.py für dasselbe Vorgehen bei den reinen Katalogtests."""
+    if position_quantity is not None:
+        session.add(Position(portfolio_id=portfolio.id, asset_id=btc,
+                             quantity=position_quantity, avg_cost=D(50000)))
+        await session.commit()
+
+    ergebnis = await _erhoehung_hat_passende_position(session, portfolio.id, btc, richtung)
+    assert ergebnis is erwartet
+
+
+async def test_lauf_stufe1_lehnt_erhoehung_ohne_passende_position_ab_sobald_limits_bestehen(
+    session, market, prices, portfolio, strategy, btc, monkeypatch
+):
+    """Integrationstest für Schritt 1.13 über den vollen ``lauf_stufe1``-Pfad: Da
+    ``mindest_barbestand`` & Co. (B-11, noch nicht gebaut) heute jeden Vorschlag vor
+    Schritt 1.13 abfangen würden, wird die Katalogfunktion für diesen Test durch eine
+    leere Liste ersetzt (Stand "alle Limits aus HED-33 bestehen") -- so wird sichtbar,
+    dass Schritt 1.13 selbst innerhalb von ``lauf_stufe1`` korrekt verdrahtet ist,
+    unabhängig vom Entwicklungsstand der anderen Limits."""
+    import app.trading.stufe1 as stufe1_module
+
+    monkeypatch.setattr(stufe1_module, "pruefe_alle_limits", lambda ctx: [])
+
+    signal = _signal(strategy.id, btc, proposal_kind="increase")
+    proposal = await create_proposal(session, signal, mode="paper")
+    await session.commit()
+
+    eingabe = _eingabe(signal, btc)
+    result = await lauf_stufe1(
+        session, market, strategy, proposal, eingabe, tranche="B1", tranche_eur=D(2000)
+    )
+    await session.commit()
+
+    assert result.state == STATE_STUFE1_ABGELEHNT
+    assert result.rejection_reason_code == "erhoehung_ohne_passende_position"
 
 
 async def test_strategie_ohne_portfolio_wird_fail_closed_abgelehnt(session, market, prices):

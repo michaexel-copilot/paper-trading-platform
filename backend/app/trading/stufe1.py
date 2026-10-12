@@ -22,8 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.marketdata.base import DataUnavailable
 from app.marketdata.service import MarketService
-from app.models import Asset, Order, Portfolio, Proposal, Strategy, ValueSnapshot
+from app.models import Asset, Order, Portfolio, Position, Proposal, Strategy, ValueSnapshot
 from app.models.proposals import (
+    PROPOSAL_DIRECTIONS,
     STATE_STUFE1_ABGELEHNT,
     STATE_STUFE1_LAEUFT,
     STATE_WARTET_AUF_BOARD,
@@ -231,6 +232,62 @@ def _erster_bruch(ergebnisse: list[LimitErgebnis]) -> LimitErgebnis | None:
     return next((e for e in ergebnisse if e.gebrochen), None)
 
 
+def _signal_unplausibel(eingabe: ProposalEingabe) -> str | None:
+    """Schritt 1.1 (Entwurf 6.1): Vollständigkeit des Signals ist durch die
+    Pflichtfelder des frozen dataclass ``ProposalEingabe`` bereits erzwungen (fehlende
+    Werte brechen die Konstruktion, siehe CRO-Abnahme HED-63) -- hier nur die darüber
+    hinausgehende Plausibilität: Größe, Vorschlagskurs und Stop-Kurs müssen positiv
+    sein, Richtung eines der beiden erlaubten Werte. Gibt bei Verstoß den
+    Ablehnungsgrund zurück, sonst ``None``.
+    """
+    if eingabe.direction not in PROPOSAL_DIRECTIONS:
+        return f"Richtung '{eingabe.direction}' ist weder long noch short"
+    if eingabe.size <= 0:
+        return "Größe ist nicht größer null"
+    if eingabe.proposal_price <= 0:
+        return "Vorschlagskurs ist nicht größer null"
+    if eingabe.stop_price <= 0:
+        return "Stop-Kurs ist nicht größer null"
+    return None
+
+
+async def _kurs_lesbar_und_alter(
+    session: AsyncSession, market: MarketService, asset_id: int
+) -> tuple[bool, int | None]:
+    """Schritt 1.4 (Entwurf 6.1): Kurs lesbar, Kursalter berechenbar -- für das
+    Vorschlagsinstrument selbst, unabhängig von :func:`sammle_kontext` (die fragt
+    heute nur den FX-Kurs ab, nie den Instrumentkurs selbst). Anders als die
+    30-Sekunden-Grenze aus Schritt 2.6 prüft dieser Schritt nur Lesbarkeit, nicht
+    Alter gegen eine Schwelle -- die Frischeschwelle gilt laut HED-8 Abschnitt 4.4 am
+    Orderzeitpunkt (Stufe 2), nicht am Vorschlagszeitpunkt (Stufe 1).
+    """
+    asset = await session.get(Asset, asset_id)
+    if asset is None:
+        return False, None
+    try:
+        view = await market.view(asset)
+    except DataUnavailable:
+        return False, None
+    return True, int(view.age_seconds)
+
+
+async def _erhoehung_hat_passende_position(
+    session: AsyncSession, portfolio_id: int, asset_id: int, direction: str
+) -> bool:
+    """Schritt 1.13 (Entwurf 6.1): Bei einer Erhöhung muss eine bestehende Position
+    gleicher Richtung vorhanden sein -- dieselbe Abfrage wie Stufe-2-Schritt 2.9 (dort:
+    Richtungsumkehr-Prüfung unmittelbar vor Versand), hier am Vorschlagszeitpunkt."""
+    position = await session.scalar(
+        select(Position).where(
+            Position.portfolio_id == portfolio_id, Position.asset_id == asset_id
+        )
+    )
+    if position is None or position.quantity == 0:
+        return False
+    bestehende_richtung = "long" if position.quantity > 0 else "short"
+    return bestehende_richtung == direction
+
+
 async def lauf_stufe1(
     session: AsyncSession,
     market: MarketService,
@@ -259,6 +316,18 @@ async def lauf_stufe1(
     await transition(session, proposal, STATE_STUFE1_LAEUFT, actor="system",
                      reason="Stufe 1 gestartet")
 
+    # Schritt 1.1 (Entwurf Abschnitt 6.1, nachgerüstet HED-65/CRO-Abnahme HED-63):
+    # Vollständigkeit ist durch die Pflichtfelder von ProposalEingabe bereits
+    # erzwungen -- hier die darüber hinausgehende Plausibilität (Größe/Kurse positiv,
+    # Richtung gültig).
+    unplausibel = _signal_unplausibel(eingabe)
+    if unplausibel is not None:
+        await transition(
+            session, proposal, STATE_STUFE1_ABGELEHNT, actor="system",
+            reason=f"{unplausibel} -- Schritt 1.1", rejection_reason_code="signal_unplausibel",
+        )
+        return proposal
+
     # Schritt 1.2 (Entwurf Abschnitt 6.1): Stop-Kurs muss beim Entstehen des Vorschlags
     # schon auf der richtigen Seite des Vorschlagskurses liegen (Long: Stop darunter;
     # Short: Stop darüber) -- dieselbe Formel wie Schritt 2.11 (dort: aktueller Kurs
@@ -276,6 +345,22 @@ async def lauf_stufe1(
             rejection_reason_code="stop_falsche_seite",
         )
         return proposal
+
+    # Schritt 1.4 (Entwurf Abschnitt 6.1, nachgerüstet HED-65/CRO-Abnahme HED-63):
+    # Kurs für das Vorschlagsinstrument selbst muss lesbar und sein Alter berechenbar
+    # sein -- unabhängig von sammle_kontext (die nur den FX-Kurs abfragt).
+    kurs_lesbar, price_age_seconds = await _kurs_lesbar_und_alter(
+        session, market, eingabe.instrument_asset_id
+    )
+    if not kurs_lesbar:
+        await transition(
+            session, proposal, STATE_STUFE1_ABGELEHNT, actor="system",
+            reason="Kurs für das Vorschlagsinstrument nicht lesbar oder Kursalter nicht "
+                   "berechenbar -- Schritt 1.4",
+            rejection_reason_code="kurs_nicht_lesbar",
+        )
+        return proposal
+    proposal.price_age_seconds = price_age_seconds
 
     portfolio = (
         await session.get(Portfolio, strategy.portfolio_id) if strategy.portfolio_id else None
@@ -317,6 +402,22 @@ async def lauf_stufe1(
             reason=bruch.begruendung, rejection_reason_code=bruch.limit,
         )
         return proposal
+
+    # Schritt 1.13 (Entwurf Abschnitt 6.1, nachgerüstet HED-65/CRO-Abnahme HED-63): bei
+    # einer Erhöhung muss eine bestehende Position gleicher Richtung vorhanden sein --
+    # Stufe-2-Schritt 2.9 fängt eine spätere Richtungsumkehr ab, nicht aber eine
+    # Erhöhung, die von Anfang an keine passende Position hat.
+    if eingabe.proposal_kind == "increase":
+        richtung_passt = await _erhoehung_hat_passende_position(
+            session, portfolio.id, eingabe.instrument_asset_id, eingabe.direction
+        )
+        if not richtung_passt:
+            await transition(
+                session, proposal, STATE_STUFE1_ABGELEHNT, actor="system",
+                reason="Erhöhung ohne bestehende Position gleicher Richtung -- Schritt 1.13",
+                rejection_reason_code="erhoehung_ohne_passende_position",
+            )
+            return proposal
 
     # Grenzpreis einfrieren (Abschnitt 6.3): das Dashboard muss "Freigeben bis
     # maximal X" zeigen können, bevor das Board entscheidet -- nicht erst in Stufe 2.
