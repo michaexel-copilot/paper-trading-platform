@@ -1,12 +1,21 @@
 """Vorschlag-Zustandsautomat und Gate-Weiche.
 
 Umsetzung von HED-36 Entwurf Fassung 1.1, Abschnitt 4 (CRO-freigegeben), siehe HED-41.
+Die Doppelprüfung der Sperrkennzeichen vor Z0 (Abschnitt 9.2, erster Prüfpunkt) ist
+HED-47 -- siehe ``create_proposal`` unten.
 
 Bewusst außerhalb dieses Umfangs (andere HED-36-Kinder):
-- Doppelprüfung Sperrkennzeichen (firmenweit + Strategie) -- HED-47.
+- Doppelprüfung vor Stufe 2, Schritt 2.4 -- HED-44 (noch nicht gebaut), ruft dort
+  dieselbe ``app.sperrkennzeichen.doppelpruefung_offen`` auf wie hier.
 - Stufe-1-/Stufe-2-B-2-Prüfung selbst (Limit-Berechnung, Kursfrische, Preisband) -- HED-44.
-- Versand an die Gegenstelle -- HED-42.
+- Versand an die Gegenstelle -- HED-42 (dritter, verbindlicher Prüfpunkt, bereits verdrahtet).
 - Dashboard-Darstellung -- HED-36 Abschnitt 5.
+
+Konvention für ``strategie_schluessel``: ``str(signal.strategy_id)``. Das
+``Strategy``-Modell hat kein eigenes Schlüsselfeld; die Sperrkennzeichen-Tabellen
+(HED-42) und der Versand-Engpass erwarten einen String. Ein eigenes Schlüsselfeld
+auf ``Strategy`` einzuführen ist außerhalb dieses Umfangs, solange keine zweite
+Verwendung das verlangt.
 """
 
 from dataclasses import dataclass
@@ -26,6 +35,8 @@ from app.models.proposals import (
     ProposalEvent,
 )
 from app.models.strategies import Strategy
+from app.models.vorschlag_unterdrueckung import VorschlagUnterdrueckt
+from app.sperrkennzeichen import ist_firmenweit_gesperrt, ist_strategie_gesperrt
 
 PROPOSAL_VALIDITY = timedelta(hours=2)
 
@@ -52,17 +63,41 @@ class Signal:
 
 
 async def create_proposal(session: AsyncSession, signal: Signal, *, mode: str) -> Proposal | None:
-    """Gate-Weiche vor Z0 (Entwurf 4.2a).
+    """Gate-Weiche vor Z0 (Entwurf 4.2a), dahinter die Doppelprüfung der Sperrkennzeichen
+    (Entwurf 9.2, erster Prüfpunkt: "vor jeder Vorschlagserstellung, vor Stufe 1").
 
     Liest Strategy.gate_status genau einmal, jetzt. S1/S2-Signale erzeugen keinen
     Proposal-Datensatz und laufen unverändert über den bestehenden Paper-Forward-Test-Pfad.
     Nur S3 (oder höher) erzeugt einen Proposal in Z0, mit eingefrorenem
-    strategy_gate_status (Festlegung 4.4.6).
+    strategy_gate_status (Festlegung 4.4.6) -- und auch dann nur, wenn beide
+    Sperrkennzeichen offen sind. Firmenweit wird zuerst gelesen (Entwurf 9.2
+    Festlegung 1): das übersteuert jedes Strategie-Kennzeichen, auch bei einer erst
+    nach Stufe 2 neu angelegten Strategie (Lückenfall, Testpfad 4).
     """
     gate_status = await session.scalar(
         select(Strategy.gate_status).where(Strategy.id == signal.strategy_id)
     )
     if gate_status in ("S1", "S2"):
+        return None
+
+    strategie_schluessel = str(signal.strategy_id)
+    if await ist_firmenweit_gesperrt(session):
+        session.add(
+            VorschlagUnterdrueckt(
+                strategy_id=signal.strategy_id,
+                signal_id=signal.signal_id,
+                grund="firmenweites_kennzeichen_gesetzt",
+            )
+        )
+        return None
+    if await ist_strategie_gesperrt(session, strategie_schluessel):
+        session.add(
+            VorschlagUnterdrueckt(
+                strategy_id=signal.strategy_id,
+                signal_id=signal.signal_id,
+                grund="strategie_kennzeichen_gesetzt",
+            )
+        )
         return None
 
     stop_distance = abs(signal.proposal_price - signal.stop_price)

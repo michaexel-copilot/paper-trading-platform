@@ -4,6 +4,7 @@ from app.models.auto_exit import AutoExitLogEntry
 from app.models.base import Base
 from app.models.fees import FeeProfile, PortfolioFeeProfile
 from app.models.installation import InstallationMarker
+from app.models.kill_switch import SperrkennzeichenProtokoll
 from app.models.orders import Order, Trade
 from app.models.portfolios import Portfolio, PortfolioAsset, Position, ValueSnapshot
 from app.models.proposals import Proposal, ProposalEvent
@@ -11,6 +12,7 @@ from app.models.slippage import SlippageMessungEintrag
 from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen, StrategieSperrkennzeichen
 from app.models.strategies import Strategy
 from app.models.versandengpass import VersandEngpassEintrag
+from app.models.vorschlag_unterdrueckung import VorschlagUnterdrueckt
 
 __all__ = [
     "Asset",
@@ -29,6 +31,7 @@ __all__ = [
     "Proposal",
     "ProposalEvent",
     "SlippageMessungEintrag",
+    "SperrkennzeichenProtokoll",
     "Strategy",
     "StrategieSperrkennzeichen",
     "Trade",
@@ -36,4 +39,5 @@ __all__ = [
     "UserSession",
     "ValueSnapshot",
     "VersandEngpassEintrag",
+    "VorschlagUnterdrueckt",
 ]
