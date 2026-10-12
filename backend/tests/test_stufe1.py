@@ -13,7 +13,12 @@ from app.models import Portfolio, Position, Strategy
 from app.models.proposals import STATE_STUFE1_ABGELEHNT
 from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen
 from app.trading.proposals import Signal, create_proposal
-from app.trading.stufe1 import ProposalEingabe, _erhoehung_hat_passende_position, lauf_stufe1
+from app.trading.stufe1 import (
+    ProposalEingabe,
+    _erhoehung_hat_passende_position,
+    lauf_stufe1,
+    sammle_kontext,
+)
 from tests.conftest import D, asset_id, create_portfolio
 
 
@@ -383,3 +388,81 @@ async def test_strategie_ohne_portfolio_wird_fail_closed_abgelehnt(session, mark
 
     assert result.state == STATE_STUFE1_ABGELEHNT
     assert result.rejection_reason_code == "kein_verknuepftes_portfolio"
+
+
+# --- Nachkaufen in den Verlust, HED-8 Tabelle 4.2 (HED-66) --------------------------------
+# BTC/USDT steht in der ``prices``-Fixture fest auf 50.000 -- avg_cost weit darüber bzw.
+# darunter erzeugt eindeutig Verlust bzw. Gewinn, unabhängig vom genauen EUR/USDT-Kurs.
+
+
+async def test_sammle_kontext_erkennt_nachkauf_in_verlust_bei_erhoehung_mit_verlustposition(
+    session, market, prices, portfolio, btc
+):
+    session.add(Position(portfolio_id=portfolio.id, asset_id=btc, quantity=D("0.01"),
+                         avg_cost=D(90000)))  # weit über dem aktuellen Kurs -> Verlust
+    await session.commit()
+
+    signal = _signal(0, btc, proposal_kind="increase")  # strategy_id ungenutzt hier
+    eingabe = _eingabe(signal, btc)
+    ctx = await sammle_kontext(session, market, portfolio, eingabe, tranche="B1",
+                               tranche_eur=D(2000))
+
+    assert ctx.nachkauf_in_verlust_pruefbar is True
+    assert ctx.position_unrealized_vor_trade_eur is not None
+    assert ctx.position_unrealized_vor_trade_eur < 0
+
+
+async def test_sammle_kontext_nachkauf_mit_gewinnposition_nicht_in_verlust(
+    session, market, prices, portfolio, btc
+):
+    session.add(Position(portfolio_id=portfolio.id, asset_id=btc, quantity=D("0.01"),
+                         avg_cost=D(1)))  # weit unter dem aktuellen Kurs -> Gewinn
+    await session.commit()
+
+    signal = _signal(0, btc, proposal_kind="increase")
+    eingabe = _eingabe(signal, btc)
+    ctx = await sammle_kontext(session, market, portfolio, eingabe, tranche="B1",
+                               tranche_eur=D(2000))
+
+    assert ctx.nachkauf_in_verlust_pruefbar is True
+    assert ctx.position_unrealized_vor_trade_eur is not None
+    assert ctx.position_unrealized_vor_trade_eur > 0
+
+
+async def test_sammle_kontext_entry_ist_nicht_pruefbar_auch_mit_verlustposition(
+    session, market, prices, portfolio, btc
+):
+    """Ein Entry (neues Instrument) ist per Definition kein Nachkauf -- selbst wenn
+    (bei einem anderen Vorschlag) zufällig eine Verlustposition im selben Instrument
+    bestünde, zählt das Limit nur bei ``proposal_kind == "increase"``."""
+    session.add(Position(portfolio_id=portfolio.id, asset_id=btc, quantity=D("0.01"),
+                         avg_cost=D(90000)))
+    await session.commit()
+
+    signal = _signal(0, btc, proposal_kind="entry")
+    eingabe = _eingabe(signal, btc)
+    ctx = await sammle_kontext(session, market, portfolio, eingabe, tranche="B1",
+                               tranche_eur=D(2000))
+
+    assert ctx.nachkauf_in_verlust_pruefbar is False
+    assert ctx.position_unrealized_vor_trade_eur is None
+
+
+async def test_sammle_kontext_erhoehung_in_gegenrichtung_ist_nicht_pruefbar(
+    session, market, prices, portfolio, btc
+):
+    """Richtung passt nicht (Long-Position, Short-Vorschlag) -- Schritt 1.13 lehnt das
+    gesondert ab, hier bleibt das Limit trivial unbroken statt eine falsche Position
+    zu bewerten."""
+    session.add(Position(portfolio_id=portfolio.id, asset_id=btc, quantity=D("0.01"),
+                         avg_cost=D(90000)))
+    await session.commit()
+
+    signal = _signal(0, btc, proposal_kind="increase", direction="short",
+                     stop_price=D(52500))
+    eingabe = _eingabe(signal, btc)
+    ctx = await sammle_kontext(session, market, portfolio, eingabe, tranche="B1",
+                               tranche_eur=D(2000))
+
+    assert ctx.nachkauf_in_verlust_pruefbar is False
+    assert ctx.position_unrealized_vor_trade_eur is None

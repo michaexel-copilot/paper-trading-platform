@@ -193,6 +193,24 @@ async def sammle_kontext(
     # Begründung, warum eine echte Berechnung mit offenen Positionen heute fehlt.
     korrelation = None if hat_offene_positionen else Decimal(0)
 
+    # HED-8 Tabelle 4.2 "Nachkaufen in den Verlust" (HED-66): nur einschlägig, wenn
+    # diese bestehende Position dieselbe Richtung hat wie der Vorschlag -- Schritt
+    # 1.13 prüft denselben Richtungsabgleich separat für "Erhöhung ohne passende
+    # Position"; hier zusätzlich das unrealisierte Ergebnis vor dem Trade.
+    bestehende_richtung = (
+        None if bestehende_position is None or bestehende_position.quantity == 0
+        else ("long" if bestehende_position.quantity > 0 else "short")
+    )
+    nachkauf_in_verlust_pruefbar = (
+        eingabe.proposal_kind == "increase"
+        and bestehende_richtung == eingabe.direction
+    )
+    position_unrealized_vor_trade_eur = (
+        bestehende_position.unrealized
+        if nachkauf_in_verlust_pruefbar and bestehende_position.mark.price_base is not None
+        else None
+    )
+
     risikobudget_grenze = strengerer_wert(Decimal("0.005"), nav, Decimal("0.02"), tranche_eur)
     # Die Formel in HED-8 Tabelle 4.2 bezieht sich auf Risikobudget (Euro) /
     # (1,5 x Stop-Abstand in Prozent) und ergibt eine *Positionsgröße in Euro*, nicht
@@ -225,6 +243,8 @@ async def sammle_kontext(
         risiko_je_trade_eur=risiko_je_trade_eur,
         positionsgroesse_implizierte_obergrenze=positionsgroesse_implizierte_obergrenze,
         proposal_size=eingabe.size,
+        nachkauf_in_verlust_pruefbar=nachkauf_in_verlust_pruefbar,
+        position_unrealized_vor_trade_eur=position_unrealized_vor_trade_eur,
     )
 
 
