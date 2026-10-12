@@ -28,7 +28,7 @@ from app.models.proposals import (
     STATE_STUFE1_LAEUFT,
     STATE_WARTET_AUF_BOARD,
 )
-from app.preisband import berechne_grenzpreis
+from app.preisband import berechne_grenzpreis, jenseits_des_stops
 from app.risikolimits import LimitErgebnis, RisikoKontext, pruefe_alle_limits, strengerer_wert
 from app.trading.proposals import transition
 from app.trading.valuation import Valuation, value_portfolio
@@ -258,6 +258,24 @@ async def lauf_stufe1(
     """
     await transition(session, proposal, STATE_STUFE1_LAEUFT, actor="system",
                      reason="Stufe 1 gestartet")
+
+    # Schritt 1.2 (Entwurf Abschnitt 6.1): Stop-Kurs muss beim Entstehen des Vorschlags
+    # schon auf der richtigen Seite des Vorschlagskurses liegen (Long: Stop darunter;
+    # Short: Stop darüber) -- dieselbe Formel wie Schritt 2.11 (dort: aktueller Kurs
+    # jenseits des bereits festgelegten Stops, unmittelbar vor Versand), hier auf den
+    # Vorschlagskurs selbst angewendet. Ohne diese Prüfung läuft ein verkehrt liegender
+    # Stop mit positivem, scheinbar plausiblem Stop-Abstand unbeanstandet durch
+    # Risiko-je-Trade und Positionsgrößen-Rechenweg (HED-64), weil
+    # ``app.trading.proposals.create_proposal`` die Distanz vorzeichenlos bildet.
+    if not jenseits_des_stops(eingabe.proposal_price, eingabe.stop_price, eingabe.direction):
+        await transition(
+            session, proposal, STATE_STUFE1_ABGELEHNT, actor="system",
+            reason="Stop-Kurs liegt nicht auf der richtigen Seite des Vorschlagskurses "
+                   "(Long: Stop muss unter, Short: Stop muss über dem Vorschlagskurs "
+                   "liegen) -- Schritt 1.2",
+            rejection_reason_code="stop_falsche_seite",
+        )
+        return proposal
 
     portfolio = (
         await session.get(Portfolio, strategy.portfolio_id) if strategy.portfolio_id else None
