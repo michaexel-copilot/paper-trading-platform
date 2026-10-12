@@ -147,6 +147,80 @@ async def test_limit_price_wird_bei_ablehnung_nicht_gesetzt(
     assert result.limit_price is None
 
 
+async def test_long_mit_stop_ueber_vorschlagskurs_wird_abgelehnt(
+    session, market, prices, portfolio, strategy, btc
+):
+    """Schritt 1.2 (HED-64): ein Long mit Stop ÜBER dem Vorschlagskurs ist verkehrt
+    liegend, auch wenn der (vorzeichenlose) Stop-Abstand positiv und scheinbar
+    plausibel ist -- muss vor jeder Limitberechnung abgelehnt werden, nicht erst an
+    einem der nachgelagerten Limits (z. B. risiko_je_trade) hängen bleiben."""
+    signal = _signal(
+        strategy.id, btc,
+        direction="long",
+        proposal_price=D(50000),
+        stop_price=D(52500),  # über dem Vorschlagskurs -- falsche Seite für Long
+    )
+    proposal = await create_proposal(session, signal, mode="paper")
+    await session.commit()
+
+    eingabe = _eingabe(signal, btc)
+    result = await lauf_stufe1(
+        session, market, strategy, proposal, eingabe, tranche="B1", tranche_eur=D(2000)
+    )
+    await session.commit()
+
+    assert result.state == STATE_STUFE1_ABGELEHNT
+    assert result.rejection_reason_code == "stop_falsche_seite"
+    assert result.limit_utilization is None  # vor Schritt 1.11 abgelehnt
+
+
+async def test_short_mit_stop_unter_vorschlagskurs_wird_abgelehnt(
+    session, market, prices, portfolio, strategy, btc
+):
+    """Schritt 1.2 (HED-64), Spiegelfall: Short mit Stop UNTER dem Vorschlagskurs."""
+    signal = _signal(
+        strategy.id, btc,
+        direction="short",
+        proposal_price=D(50000),
+        stop_price=D(47500),  # unter dem Vorschlagskurs -- falsche Seite für Short
+    )
+    proposal = await create_proposal(session, signal, mode="paper")
+    await session.commit()
+
+    eingabe = _eingabe(signal, btc)
+    result = await lauf_stufe1(
+        session, market, strategy, proposal, eingabe, tranche="B1", tranche_eur=D(2000)
+    )
+    await session.commit()
+
+    assert result.state == STATE_STUFE1_ABGELEHNT
+    assert result.rejection_reason_code == "stop_falsche_seite"
+
+
+async def test_stop_exakt_auf_vorschlagskurs_wird_abgelehnt(
+    session, market, prices, portfolio, strategy, btc
+):
+    """Grenzfall ohne Kulanz (dieselbe Formel wie Schritt 2.11, ``jenseits_des_stops``):
+    Stop == Vorschlagskurs ist auf keiner Seite, also auch nicht auf der richtigen."""
+    signal = _signal(
+        strategy.id, btc,
+        direction="long",
+        proposal_price=D(50000),
+        stop_price=D(50000),
+    )
+    proposal = await create_proposal(session, signal, mode="paper")
+    await session.commit()
+
+    eingabe = _eingabe(signal, btc)
+    result = await lauf_stufe1(
+        session, market, strategy, proposal, eingabe, tranche="B1", tranche_eur=D(2000)
+    )
+    await session.commit()
+
+    assert result.state == STATE_STUFE1_ABGELEHNT
+    assert result.rejection_reason_code == "stop_falsche_seite"
+
+
 async def test_strategie_ohne_portfolio_wird_fail_closed_abgelehnt(session, market, prices):
     """Eine Strategie ohne Portfolio-Verknüpfung (HED-44-Erweiterung von HED-41) kann
     keinen Vorschlag durch Stufe 1 bringen -- siehe app.models.strategies.Strategy."""
