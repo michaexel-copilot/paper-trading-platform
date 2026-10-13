@@ -29,6 +29,7 @@ from typing import Protocol
 import ccxt
 import ccxt.async_support as ccxt_async
 
+from app.config import get_settings
 from app.schluessel import ExchangeCredential
 
 QUELLE = "okx_demo"
@@ -83,6 +84,10 @@ def _client(credential: ExchangeCredential) -> ccxt_async.okx:
             "password": credential.passphrase,
             "enableRateLimit": True,
             "timeout": OKX_DEMO_TIMEOUT_MS,
+            # HED-87: der OKX-Demo-Schlüssel des Boards existiert nur auf eea.okx.com
+            # (OKX-EWR-Einheit) -- konfigurierbar statt fest verdrahtet, siehe
+            # app.config.Settings.okx_demo_hostname.
+            "hostname": get_settings().okx_demo_hostname,
         }
     )
     if credential.simulated_trading_header:

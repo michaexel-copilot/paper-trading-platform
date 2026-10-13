@@ -7,6 +7,7 @@ manuellen technischen Abnahme gegen den echten Demo-Endpunkt, nicht dieser Testd
 """
 
 from decimal import Decimal
+from types import SimpleNamespace
 
 import ccxt
 import pytest
@@ -92,6 +93,23 @@ def test_client_setzt_header_nicht_fuer_live_betriebsart():
         _credential(betriebsart=Betriebsart.LIVE, simulated_trading_header=False)
     )
     assert "x-simulated-trading" not in (client.headers or {})
+
+
+def test_client_verwendet_eea_hostname_als_standard():
+    """HED-87: der OKX-Demo-Schlüssel des Boards existiert nur auf eea.okx.com
+    (OKX-EWR-Einheit), nicht auf www.okx.com/app.okx.com (Fehlercode 50119,
+    Handtest Board 2026-10-13). Standard ohne jede Konfiguration."""
+    client = okx_demo._client(_credential())
+    assert client.hostname == "eea.okx.com"
+
+
+def test_client_hostname_kommt_aus_der_konfiguration_nicht_fest_verdrahtet(monkeypatch):
+    einstellungen = SimpleNamespace(okx_demo_hostname="anderer.okx.beispiel")
+    monkeypatch.setattr(okx_demo, "get_settings", lambda: einstellungen)
+
+    client = okx_demo._client(_credential())
+
+    assert client.hostname == "anderer.okx.beispiel"
 
 
 # --- platziere_order ---------------------------------------------------------------
