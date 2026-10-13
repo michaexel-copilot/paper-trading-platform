@@ -136,18 +136,30 @@ async def platziere_order(credential: ExchangeCredential, order: _OrderWie) -> s
 async def lese_kontostand(credential: ExchangeCredential) -> KontostandErgebnis:
     """Reiner Lesevorgang gegen den Kontostand (HED-76 Punkt 2, für die Schlüssel-
     trennungs-Verifikation aus HED-55). Setzt keine Order ab.
+
+    HED-90: ``ccxt``s vereinheitlichtes ``fetch_balance()`` lädt zuerst die Märkte
+    (``load_markets``), und das lädt bei OKX nebenbei ``fetch_currencies()`` --
+    ``GET /api/v5/asset/currencies``. Dieser Funding-Endpunkt ist im Demo-Modus
+    gesperrt und liefert OKX-Fehler 50038 ("This feature is unavailable in demo
+    trading"), bevor der eigentliche Kontostand-Aufruf überhaupt stattfindet
+    (Board-Handtest 2026-10-13: ``GET /api/v5/account/balance`` direkt funktioniert
+    im Demo-Modus). Deshalb ruft dieser Lesevorgang die implizite ccxt-Methode
+    ``privateGetAccountBalance`` auf -- das ist genau ``GET /api/v5/account/balance``,
+    ohne den Zwischenaufruf über ``load_markets``. ``rohdaten`` ist damit die
+    rohe OKX-Antwort (``code``/``data``/``msg``), nicht mehr ccxt's vereinheitlichte
+    Bilanzstruktur.
     """
     client = _client(credential)
     try:
         try:
-            rohdaten = await client.fetch_balance()
+            rohdaten = await client.privateGetAccountBalance()
         except ccxt.RequestTimeout as exc:
             raise OkxDemoTimeout(f"OKX-Demo antwortet nicht auf Kontostand-Abfrage: {exc}") from exc
         except ccxt.BaseError as exc:
             raise OkxDemoAblehnung(f"OKX-Demo lehnt Kontostand-Abfrage ab: {exc}") from exc
     finally:
         await client.close()
-    if not isinstance(rohdaten, dict) or "total" not in rohdaten:
+    if not isinstance(rohdaten, dict) or not rohdaten.get("data"):
         raise OkxDemoAntwortFehler(
             f"Unerwartetes Kontostand-Format von OKX-Demo: {type(rohdaten).__name__}"
         )

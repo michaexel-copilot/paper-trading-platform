@@ -50,15 +50,16 @@ class FakeOkxClient:
         self,
         create_order_result=None,
         create_order_exc=None,
-        fetch_balance_result=None,
-        fetch_balance_exc=None,
+        account_balance_result=None,
+        account_balance_exc=None,
     ):
         self._create_order_result = create_order_result
         self._create_order_exc = create_order_exc
-        self._fetch_balance_result = fetch_balance_result
-        self._fetch_balance_exc = fetch_balance_exc
+        self._account_balance_result = account_balance_result
+        self._account_balance_exc = account_balance_exc
         self.closed = False
         self.create_order_calls = []
+        self.private_get_account_balance_calls = 0
 
     async def create_order(self, symbol, order_type, side, amount, price=None):
         self.create_order_calls.append((symbol, order_type, side, amount, price))
@@ -66,10 +67,15 @@ class FakeOkxClient:
             raise self._create_order_exc
         return self._create_order_result
 
-    async def fetch_balance(self):
-        if self._fetch_balance_exc:
-            raise self._fetch_balance_exc
-        return self._fetch_balance_result
+    async def privateGetAccountBalance(self):
+        """HED-90: ersetzt ``fetch_balance`` -- das Produktivmodul ruft diese
+        implizite ccxt-Methode direkt auf (``GET /api/v5/account/balance``, ohne
+        den von ``fetch_balance()`` ausgelösten ``load_markets``-Zwischenaufruf,
+        der im Demo-Modus mit Fehler 50038 scheitert)."""
+        self.private_get_account_balance_calls += 1
+        if self._account_balance_exc:
+            raise self._account_balance_exc
+        return self._account_balance_result
 
     async def close(self):
         self.closed = True
@@ -167,8 +173,14 @@ async def test_platziere_order_unbekannter_ordertyp_ruft_client_nicht_auf(monkey
 
 
 async def test_lese_kontostand_erfolg(monkeypatch):
-    rohdaten = {"total": {"USDT": 1000.0}, "free": {"USDT": 1000.0}}
-    fake = FakeOkxClient(fetch_balance_result=rohdaten)
+    """HED-90: rohdaten ist jetzt die rohe OKX-Antwort von GET /api/v5/account/balance
+    (code/data/msg), nicht mehr ccxt's vereinheitlichte Bilanzstruktur."""
+    rohdaten = {
+        "code": "0",
+        "msg": "",
+        "data": [{"totalEq": "477500", "details": [{"ccy": "USDT", "cashBal": "1000"}]}],
+    }
+    fake = FakeOkxClient(account_balance_result=rohdaten)
     monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
 
     ergebnis = await okx_demo.lese_kontostand(_credential())
@@ -176,11 +188,12 @@ async def test_lese_kontostand_erfolg(monkeypatch):
     assert ergebnis.quelle == "okx_demo"
     assert ergebnis.betriebsart == "papier"
     assert ergebnis.rohdaten == rohdaten
+    assert fake.private_get_account_balance_calls == 1
     assert fake.closed is True
 
 
 async def test_lese_kontostand_timeout(monkeypatch):
-    fake = FakeOkxClient(fetch_balance_exc=ccxt.RequestTimeout("kein Pong"))
+    fake = FakeOkxClient(account_balance_exc=ccxt.RequestTimeout("kein Pong"))
     monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
 
     with pytest.raises(okx_demo.OkxDemoTimeout):
@@ -189,7 +202,7 @@ async def test_lese_kontostand_timeout(monkeypatch):
 
 
 async def test_lese_kontostand_ablehnung(monkeypatch):
-    fake = FakeOkxClient(fetch_balance_exc=ccxt.AuthenticationError("falscher Schlüssel"))
+    fake = FakeOkxClient(account_balance_exc=ccxt.AuthenticationError("falscher Schlüssel"))
     monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
 
     with pytest.raises(okx_demo.OkxDemoAblehnung):
@@ -197,9 +210,28 @@ async def test_lese_kontostand_ablehnung(monkeypatch):
     assert fake.closed is True
 
 
-@pytest.mark.parametrize("rohdaten", ["nicht-ein-dict", {}, {"free": {}}])
+async def test_lese_kontostand_ablehnung_bei_gesperrtem_endpunkt_im_demo_modus(monkeypatch):
+    """HED-90: Regressionstest für den ursprünglichen Fehler -- ein Endpunkt, den OKX
+    im Demo-Modus sperrt, muss weiterhin als OkxDemoAblehnung ankommen, nicht als
+    unbehandelte ccxt-Ausnahme."""
+    fake = FakeOkxClient(
+        account_balance_exc=ccxt.ExchangeError(
+            'okx {"code":"50038","msg":"This feature is unavailable in demo trading"}'
+        )
+    )
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoAblehnung):
+        await okx_demo.lese_kontostand(_credential())
+    assert fake.closed is True
+
+
+@pytest.mark.parametrize(
+    "rohdaten",
+    ["nicht-ein-dict", {}, {"code": "0", "msg": "", "data": []}, {"code": "0", "msg": ""}],
+)
 async def test_lese_kontostand_falsches_format(monkeypatch, rohdaten):
-    fake = FakeOkxClient(fetch_balance_result=rohdaten)
+    fake = FakeOkxClient(account_balance_result=rohdaten)
     monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
 
     with pytest.raises(okx_demo.OkxDemoAntwortFehler):
