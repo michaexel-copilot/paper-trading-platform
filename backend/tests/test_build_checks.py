@@ -18,9 +18,9 @@ def test_echter_quellbaum_hat_genau_eine_zugriffsstelle():
 
 
 def test_echter_quellbaum_papier_paket_existiert_noch():
-    """Dokumentiert den aktuellen Stand: app/trading/papier existiert (Scaffold für
-    B-6) und ist deshalb im Live-Artefakt noch ein Fehler, bis es wirklich leer bleibt
-    oder B-6 es befüllt und das Dockerfile es für 'live' entfernt."""
+    """Dokumentiert den aktuellen Stand: app/trading/papier enthält den OKX-Demo-
+    Orderpfad (B-6) und ist deshalb im Live-Artefakt ein Fehler, bis das Dockerfile es
+    für 'live' aus dem Quellbaum entfernt (Auflage 4, nicht Gegenstand dieses Tests)."""
     assert build_checks.pruefe_live_artefakt_ohne_papier_pakete(APP_ROOT) is not None
 
 
@@ -67,6 +67,39 @@ def test_live_artefakt_mit_papier_paket_schlaegt_an(tmp_path):
     (app_root / "trading" / "papier").mkdir(parents=True)
     fehler = build_checks.pruefe_live_artefakt_ohne_papier_pakete(app_root)
     assert fehler is not None
+
+
+def test_echter_quellbaum_papier_paket_ohne_performance_abhaengigkeit():
+    """Isolationspflicht B-6 (HED-76 Punkt 3): app/trading/papier/okx_demo.py importiert
+    keines der Performance-/Rendite-Module."""
+    assert build_checks.pruefe_papier_ohne_performance_abhaengigkeit(APP_ROOT) is None
+
+
+def test_papier_paket_mit_performance_import_bricht_ab(tmp_path):
+    app_root = tmp_path / "app"
+    (app_root / "trading" / "papier").mkdir(parents=True)
+    (app_root / "trading" / "papier" / "undicht.py").write_text(
+        "from app.models import ValueSnapshot\n"
+    )
+
+    fehler = build_checks.pruefe_papier_ohne_performance_abhaengigkeit(app_root)
+    assert fehler is not None
+    assert "app.models" in fehler
+
+
+def test_papier_paket_ohne_performance_import_besteht(tmp_path):
+    app_root = tmp_path / "app"
+    (app_root / "trading" / "papier").mkdir(parents=True)
+    (app_root / "trading" / "papier" / "sauber.py").write_text("import ccxt\n")
+
+    assert build_checks.pruefe_papier_ohne_performance_abhaengigkeit(app_root) is None
+
+
+def test_fehlendes_papier_paket_besteht_die_isolationspruefung(tmp_path):
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+
+    assert build_checks.pruefe_papier_ohne_performance_abhaengigkeit(app_root) is None
 
 
 @pytest.mark.parametrize("artefakt_art", ["papier_artefakt", "live_artefakt"])

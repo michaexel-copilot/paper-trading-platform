@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen, StrategieSperrkennzeichen
 from app.models.versandengpass import VersandEngpassEintrag
+from app.trading.papier import okx_demo
 from app.trading.versandengpass import Versandengpass, VersandOrder
 
 
@@ -138,9 +139,36 @@ async def test_stop_platzierung_laeuft_trotz_strategie_sperre(mit_schluessel, se
     assert ergebnis.ablehnungsgrund != "unterdrueckt_durch_sperre"
 
 
-async def test_alle_pruefungen_bestanden_aber_noch_kein_echter_versand(mit_schluessel, session):
-    """B-6 ist noch nicht gebaut: selbst wenn alle sieben Prüfungen bestehen, gibt es
-    keinen Code, der eine Order tatsächlich an die Gegenstelle schickt."""
+async def test_alle_pruefungen_bestanden_sendet_an_okx_demo_in_papier_betriebsart(
+    mit_schluessel, session, monkeypatch
+):
+    """B-6 (HED-76): in Papier-Betriebsart ist der echte OKX-Demo-Orderpfad verdrahtet.
+    Kein Netzwerkzugriff hier -- ``platziere_order`` selbst wird ersetzt, der
+    Netzwerkteil ist in tests/test_okx_demo.py abgedeckt."""
+
+    async def gefaelschtes_platzieren(_credential, _order):
+        return "okx-demo-order-1"
+
+    monkeypatch.setattr(okx_demo, "platziere_order", gefaelschtes_platzieren)
+
+    async def immer_gueltig(_session, _order):
+        return True
+
+    engpass = Versandengpass(freigabe_nachweis_pruefer=immer_gueltig, stufe2_pruefer=immer_gueltig)
+    ergebnis = await engpass.send(session, _order(gattung="einstieg"))
+    assert ergebnis.angenommen is True
+    assert ergebnis.gegenstellen_order_id == "okx-demo-order-1"
+
+
+async def test_live_betriebsart_lehnt_versand_weiterhin_ab(betriebsart, monkeypatch, session):
+    """B-6 deckt ausdrücklich keinen Live-Orderpfad ab -- das bleibt NotImplementedError,
+    selbst wenn alle sieben Prüfungen (künstlich) bestehen würden."""
+    betriebsart("live")
+    monkeypatch.setenv("OKX_LIVE_API_KEY", "live-key")
+    monkeypatch.setenv("OKX_LIVE_API_SECRET", "live-secret")
+    monkeypatch.delenv("OKX_DEMO_API_KEY", raising=False)
+    session.add(FirmenweitesSperrkennzeichen(gesetzt=False))
+    await session.commit()
 
     async def immer_gueltig(_session, _order):
         return True

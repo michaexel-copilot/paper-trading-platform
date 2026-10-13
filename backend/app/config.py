@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     # Konfigurations-Default.
     freigegebene_tranche: str = "B1"
 
+    # OKX-Demo-Hostname (HED-87, Nachtrag zu B-6/HED-76): der OKX-Demo-Schlüssel des
+    # Boards gehört zu einem Konto der OKX-EWR-Einheit und existiert ausschließlich auf
+    # eea.okx.com (Fehlercode 50119 "API key doesn't exist" auf www.okx.com/app.okx.com,
+    # Handtest Board 2026-10-13). Konfigurierbar statt fest verdrahtet, falls künftige
+    # Demo-Schlüssel zu einer anderen OKX-Einheit gehören.
+    okx_demo_hostname: str = "eea.okx.com"
+
     # Board-Benachrichtigung (HED-43, Entwurf 5.3): E-Mail an die Board-Verteilerliste je
     # Vorschlag in Z3. Nur Python-Standardbibliothek (smtplib) -- bewusst kein
     # Drittanbieter-Versanddienst, um die Prüfkarte aus Anhang A zu vermeiden (Entwurf
