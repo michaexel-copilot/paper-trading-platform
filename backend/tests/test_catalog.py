@@ -58,7 +58,7 @@ async def test_crypto_metadata_comes_from_the_exchange(client, session, market, 
     body = (await client.get(f"/api/assets/{btc.id}")).json()
 
     assert body["source"] == "okx" and body["available"] is True
-    assert body["quote_currency"] == "USDT"
+    assert body["quote_currency"] == "USDC"
     assert body["quantity_step"] == "0.00000001" and body["min_order_size"] == "0.00001"
     assert body["calendar"] == "24/7"
 

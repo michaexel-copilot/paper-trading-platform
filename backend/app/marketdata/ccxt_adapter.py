@@ -9,8 +9,12 @@ import ccxt.async_support as ccxt_async
 from app.marketdata.base import Bar, Instrument, NotListed, Quote, SourceError, to_decimal
 
 MARKETS_TTL_SECONDS = 24 * 3600
-# Quote currencies offered by search, in order of preference.
-SEARCH_QUOTES = ("USDT", "USD", "USDC", "EUR")
+# Quote currencies offered by search, in order of preference. USDC first, USDT
+# last (HED-99): OKX rejects USDT spot pairs for the EWR-entity account (error
+# 51155), so a USDT match must never be the default a user is steered toward.
+# Kept, not removed, as a last resort for non-OKX sources in the chain that may
+# list a coin only against USDT.
+SEARCH_QUOTES = ("USDC", "USD", "EUR", "USDT")
 OHLCV_PAGE_LIMIT = 40
 
 

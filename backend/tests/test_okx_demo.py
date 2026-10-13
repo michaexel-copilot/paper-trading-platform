@@ -34,7 +34,7 @@ class _Order:
     def __init__(self, **overrides):
         felder = dict(
             exchange="okx",
-            symbol="BTC/USDT",
+            symbol="BTC/USDC",
             side="buy",
             quantity=Decimal("0.01"),
             order_type="market",
@@ -143,7 +143,7 @@ async def test_platziere_order_erfolg(monkeypatch):
     order_id = await okx_demo.platziere_order(_credential(), _Order())
 
     assert order_id == "okx-demo-123"
-    assert fake.create_order_calls == [("BTC/USDT", "market", "buy", 0.01, None)]
+    assert fake.create_order_calls == [("BTC/USDC", "market", "buy", 0.01, None)]
     assert fake.closed is True
 
 

@@ -253,7 +253,7 @@ async def test_crypto_trades_at_the_weekend(client, portfolio, btc, clock):
 
 
 async def test_immediately_fillable_limit_buy_takes_the_ask(client, portfolio, btc, prices, clock):
-    reprice(prices, clock, "BTC/USDT", 101, bid=100, ask=101, source="okx")
+    reprice(prices, clock, "BTC/USDC", 101, bid=100, ask=101, source="okx")
 
     order = (
         await place(client, portfolio, asset_id=btc, type="limit", limit_price=105, quantity=10)
@@ -268,14 +268,14 @@ async def test_immediately_fillable_limit_buy_takes_the_ask(client, portfolio, b
 async def test_resting_limit_buy_fills_at_its_limit_as_maker(
     client, portfolio, btc, prices, clock, matcher
 ):
-    reprice(prices, clock, "BTC/USDT", 100, bid=99, ask=100, source="okx")
+    reprice(prices, clock, "BTC/USDC", 100, bid=99, ask=100, source="okx")
     order = (
         await place(client, portfolio, asset_id=btc, type="limit", limit_price=95, quantity=10)
     ).json()
     assert order["status"] == "open"
     assert await matcher.tick() == 0
 
-    reprice(prices, clock, "BTC/USDT", 94, bid=93, ask=94, source="okx")
+    reprice(prices, clock, "BTC/USDC", 94, bid=93, ask=94, source="okx")
     assert await matcher.tick() == 1
 
     trade = (await trades(client, portfolio))[0]
@@ -434,11 +434,11 @@ async def test_resting_order_fills_with_no_request_in_flight(
 ):
     """The matcher's own loop fills the order; nobody calls the API meanwhile."""
     monkeypatch.setattr("app.trading.matcher.TICK_SECONDS", 0.01)
-    reprice(prices, clock, "BTC/USDT", 100, bid=99, ask=100, source="okx")
+    reprice(prices, clock, "BTC/USDC", 100, bid=99, ask=100, source="okx")
     await place(client, portfolio, asset_id=btc, type="limit", limit_price=95, quantity=10)
     await client.post("/api/auth/logout")
 
-    reprice(prices, clock, "BTC/USDT", 94, bid=93, ask=94, source="okx")
+    reprice(prices, clock, "BTC/USDC", 94, bid=93, ask=94, source="okx")
     fill_time = clock()
     app.state.matcher.start()
     try:
@@ -760,7 +760,7 @@ async def test_trade_shows_price_source_conversion_and_fee(client, portfolio, bt
 
     assert trade == listed
     assert trade["asset_symbol"] == "BTC" and trade["side"] == "buy" and trade["quantity"] == "0.1"
-    assert trade["price"] == "50010" and trade["quote_currency"] == "USDT"
+    assert trade["price"] == "50010" and trade["quote_currency"] == "USDC"
     assert trade["quote_source"] == "okx"
     assert (
         trade["quote_observed_at"]

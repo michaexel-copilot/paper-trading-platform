@@ -59,7 +59,7 @@ def _signal(strategy_id: int, **overrides) -> AusstiegsSignal:
         strategy_id=strategy_id,
         instrument="BTC",
         exchange="okx",
-        symbol="BTC/USDT",
+        symbol="BTC/USDC",
         side="sell",
         size=D("0.01"),
         signal_at=datetime.now(UTC),

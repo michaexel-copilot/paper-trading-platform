@@ -161,8 +161,8 @@ async def other_client(app):
 @pytest.fixture
 def prices(sources):
     """Quotes for one asset per source and the EUR/USD rate."""
-    sources["okx"].add("BTC/USDT", currency="USDT", step="0.00000001", minimum="0.00001")
-    sources["okx"].price("BTC/USDT", 50000, bid=49990, ask=50010)
+    sources["okx"].add("BTC/USDC", currency="USDC", step="0.00000001", minimum="0.00001")
+    sources["okx"].price("BTC/USDC", 50000, bid=49990, ask=50010)
     sources["yahoo"].add("AAPL", "equity", exchange="NMS")
     sources["yahoo"].price("AAPL", 200, bid=199.9, ask=200.1)
     sources["yahoo"].add("EURUSD=X", "currency", exchange="CCY")
