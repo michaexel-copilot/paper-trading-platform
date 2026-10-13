@@ -94,6 +94,21 @@ def test_client_setzt_header_fuer_papier_betriebsart():
     assert client.headers.get("x-simulated-trading") == "1"
 
 
+def test_client_setzt_sandbox_modus_fuer_papier_betriebsart():
+    """HED-92: ``set_sandbox_mode(True)`` statt der händischen Header-Zuweisung --
+    setzt ``options['sandboxMode']``, das ccxt-/OKX-eigene Flag, das
+    ``fetch_currencies()`` (Fehler 50038 im Demo-Modus) umgeht."""
+    client = okx_demo._client(_credential(simulated_trading_header=True))
+    assert client.options.get("sandboxMode") is True
+
+
+def test_client_setzt_sandbox_modus_nicht_fuer_live_betriebsart():
+    client = okx_demo._client(
+        _credential(betriebsart=Betriebsart.LIVE, simulated_trading_header=False)
+    )
+    assert client.options.get("sandboxMode") is not True
+
+
 def test_client_setzt_header_nicht_fuer_live_betriebsart():
     client = okx_demo._client(
         _credential(betriebsart=Betriebsart.LIVE, simulated_trading_header=False)

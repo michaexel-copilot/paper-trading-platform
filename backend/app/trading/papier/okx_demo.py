@@ -91,7 +91,17 @@ def _client(credential: ExchangeCredential) -> ccxt_async.okx:
         }
     )
     if credential.simulated_trading_header:
-        client.headers = {**(client.headers or {}), "x-simulated-trading": "1"}
+        # HED-92: ccxt/OKX sehen für den Demo-Modus eine eigene Sperre vor --
+        # fetch_currencies() (GET /api/v5/asset/currencies, Fehler 50038 im Demo-
+        # Modus) übersetzt automatisch {}, wenn self.options['sandboxMode'] gesetzt
+        # ist (ccxt 4.5.85, okx.py:2030-2032). set_sandbox_mode(True) setzt genau
+        # dieses Flag und zusätzlich denselben Header, den wir bisher händisch
+        # gesetzt haben -- load_markets()/create_order() laufen damit durch, ohne
+        # den gesperrten Endpunkt zu berühren. Der von der Basisklasse sonst
+        # vorgenommene URL-Wechsel ist für OKX folgenlos: urls['test']['rest'] und
+        # urls['api']['rest'] sind identisch ('https://{hostname}'); der
+        # konfigurierbare Hostname aus HED-87 bleibt unberührt.
+        client.set_sandbox_mode(True)
     return client
 
 
