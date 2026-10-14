@@ -32,7 +32,7 @@ SYMBOL = "BTC/USDC"
 NICHT_AUSLOESENDER_TRIGGER = Decimal("40000")
 
 
-def _demo_credential() -> ExchangeCredential:
+def _demo_credential(*, simulated_trading_header: bool = True) -> ExchangeCredential:
     api_key = os.environ.get("OKX_DEMO_API_KEY")
     api_secret = os.environ.get("OKX_DEMO_API_SECRET")
     passphrase = os.environ.get("OKX_DEMO_PASSPHRASE")
@@ -40,7 +40,7 @@ def _demo_credential() -> ExchangeCredential:
         pytest.skip("Kein OKX-Demo-Secret in der Umgebung -- Test übersprungen.")
     return ExchangeCredential(
         exchange="okx", api_key=api_key, api_secret=api_secret, passphrase=passphrase,
-        betriebsart=Betriebsart.PAPIER, simulated_trading_header=True,
+        betriebsart=Betriebsart.PAPIER, simulated_trading_header=simulated_trading_header,
     )
 
 
@@ -129,6 +129,37 @@ async def test_p13_gegenprobe_slordpx_mit_explizitem_preis_ist_kein_minus_eins()
             await client.cancel_order(algo_id, SYMBOL, params={"trigger": True})
     finally:
         await client.close()
+
+
+@pytest.mark.live
+async def test_p15_stornierung_mit_falscher_algo_id_wirft_eigene_ausnahme():
+    """P-15: eine nicht existierende ``algoId`` beim Stornieren ist eine eigene
+    Ausnahme (``OkxDemoAblehnung``), kein stiller Ausweichweg."""
+    credential = _demo_credential()
+    with pytest.raises(okx_demo.OkxDemoFehler):
+        await okx_demo.storniere_algo_order(credential, "nicht-existierende-algo-id", SYMBOL)
+
+
+@pytest.mark.live
+async def test_p15_ungueltiges_symbol_wirft_eigene_ausnahme():
+    """P-15: ein Symbol, das OKX nicht kennt, ist eine eigene Ausnahme beim Lesen
+    offener Algo-Order, kein stiller Ausweichweg (leere Liste wäre falsch -- das sähe
+    wie "keine offenen Stops" aus, nicht wie ein Fehler)."""
+    credential = _demo_credential()
+    with pytest.raises(okx_demo.OkxDemoFehler):
+        await okx_demo.lese_offene_algo_orders(credential, "NICHTEXISTENT/USDC")
+
+
+@pytest.mark.live
+async def test_p15_ohne_simulated_trading_header_scheitert_lesevorgang_an_umgebungsbindung():
+    """P-15: wie beim Kontostand-Lesevorgang (HED-101, ``test_okx_demo_live.py``)
+    lehnt OKX den Lesevorgang offener Algo-Order ohne den passenden
+    simulated-trading-Header mit dem umgebungsbezogenen Fehlercode 50101 ab --
+    sichtbar, nicht still."""
+    credential = _demo_credential(simulated_trading_header=False)
+    with pytest.raises(okx_demo.OkxDemoAblehnung) as exc_info:
+        await okx_demo.lese_offene_algo_orders(credential, SYMBOL)
+    assert "50101" in str(exc_info.value) or "environment" in str(exc_info.value).lower()
 
 
 def _client_wie_okx_demo(credential: ExchangeCredential) -> ccxt_async.okx:
