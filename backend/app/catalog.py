@@ -244,7 +244,12 @@ async def _crypto_symbols(
         source = market.router.sources.get(name)
         if source is None or name in symbols:
             continue
-        candidates = [f"{base}-USD"] if name == "yahoo" else [f"{base}/USDT", f"{base}/USD"]
+        # USDC first (HED-99): OKX rejects USDT spot pairs for the EWR-entity
+        # account (error 51155). USDT stays only as a last-resort fallback for
+        # sources other than OKX that may not list a coin against USDC or USD.
+        candidates = (
+            [f"{base}-USD"] if name == "yahoo" else [f"{base}/USDC", f"{base}/USD", f"{base}/USDT"]
+        )
         for candidate in candidates:
             try:
                 await source.instrument(candidate)

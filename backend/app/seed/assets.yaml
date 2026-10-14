@@ -3,7 +3,7 @@
 # Rankings were checked on the date below against the listings named per class.
 # The seeder is idempotent and keyed on `symbol`; editing this file and
 # restarting adds new assets and never removes existing ones.
-checked_on: 2026-09-30
+checked_on: 2026-10-13
 
 classes:
   crypto:
@@ -11,41 +11,46 @@ classes:
       Market capitalisation on CoinGecko (api.coingecko.com/api/v3/coins/markets).
       Left out: the stablecoins USDT, USDC and USDS, and Figure Heloc (FIGR_HELOC),
       a tokenised loan pool with no market on any configured source.
+      Quote currency USDC, not USDT (HED-99): OKX rejects USDT spot pairs for the
+      EWR-entity account used by B-6 (error 51155); BTC/USDC went through the full
+      order lifecycle on OKX-Demo (eea.okx.com) twice. Checked (public, read-only,
+      eea.okx.com, 2026-10-13) that all ten seed assets below have a spot pair
+      against USDC.
     defaults:
-      quote_currency: USDT
+      quote_currency: USDC
       quantity_step: "0.00000001"
       calendar: "24/7"
     assets:
       - symbol: BTC
         name: Bitcoin
-        symbols: {okx: BTC/USDT, kraken: BTC/USD, coinbase: BTC/USD, yahoo: BTC-USD}
+        symbols: {okx: BTC/USDC, kraken: BTC/USD, coinbase: BTC/USD, yahoo: BTC-USD}
       - symbol: ETH
         name: Ethereum
-        symbols: {okx: ETH/USDT, kraken: ETH/USD, coinbase: ETH/USD, yahoo: ETH-USD}
+        symbols: {okx: ETH/USDC, kraken: ETH/USD, coinbase: ETH/USD, yahoo: ETH-USD}
       - symbol: BNB
         name: BNB
-        symbols: {okx: BNB/USDT, kraken: BNB/USD, coinbase: BNB/USD, yahoo: BNB-USD}
+        symbols: {okx: BNB/USDC, kraken: BNB/USD, coinbase: BNB/USD, yahoo: BNB-USD}
       - symbol: XRP
         name: XRP
-        symbols: {okx: XRP/USDT, kraken: XRP/USD, coinbase: XRP/USD, yahoo: XRP-USD}
+        symbols: {okx: XRP/USDC, kraken: XRP/USD, coinbase: XRP/USD, yahoo: XRP-USD}
       - symbol: SOL
         name: Solana
-        symbols: {okx: SOL/USDT, kraken: SOL/USD, coinbase: SOL/USD, yahoo: SOL-USD}
+        symbols: {okx: SOL/USDC, kraken: SOL/USD, coinbase: SOL/USD, yahoo: SOL-USD}
       - symbol: TRX
         name: TRON
-        symbols: {okx: TRX/USDT, kraken: TRX/USD, yahoo: TRX-USD}
+        symbols: {okx: TRX/USDC, kraken: TRX/USD, yahoo: TRX-USD}
       - symbol: ZEC
         name: Zcash
-        symbols: {okx: ZEC/USDT, kraken: ZEC/USD, coinbase: ZEC/USD, yahoo: ZEC-USD}
+        symbols: {okx: ZEC/USDC, kraken: ZEC/USD, coinbase: ZEC/USD, yahoo: ZEC-USD}
       - symbol: HYPE
         name: Hyperliquid
-        symbols: {okx: HYPE/USDT, kraken: HYPE/USD, coinbase: HYPE/USD, yahoo: HYPE32196-USD}
+        symbols: {okx: HYPE/USDC, kraken: HYPE/USD, coinbase: HYPE/USD, yahoo: HYPE32196-USD}
       - symbol: DOGE
         name: Dogecoin
-        symbols: {okx: DOGE/USDT, kraken: DOGE/USD, coinbase: DOGE/USD, yahoo: DOGE-USD}
+        symbols: {okx: DOGE/USDC, kraken: DOGE/USD, coinbase: DOGE/USD, yahoo: DOGE-USD}
       - symbol: LINK
         name: Chainlink
-        symbols: {okx: LINK/USDT, kraken: LINK/USD, coinbase: LINK/USD, yahoo: LINK-USD}
+        symbols: {okx: LINK/USDC, kraken: LINK/USD, coinbase: LINK/USD, yahoo: LINK-USD}
 
   stocks:
     basis: >-

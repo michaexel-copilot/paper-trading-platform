@@ -268,11 +268,11 @@ async def test_kurs_nicht_lesbar_wird_in_stufe1_abgelehnt(
     session, market, sources, portfolio, strategy
 ):
     """Schritt 1.4 (HED-65): Kein Preis für das Vorschlagsinstrument gescriptet --
-    keine Quelle in der Kette (okx/kraken/yahoo) kennt BTC/USDT -- Stufe 1 muss fail
+    keine Quelle in der Kette (okx/kraken/yahoo) kennt BTC/USDC -- Stufe 1 muss fail
     closed ablehnen, statt erst in sammle_kontext an einer anderen Stelle zu stolpern.
     Nutzt bewusst ``sources`` statt der ``prices``-Fixture (über die auch die
-    ``btc``-Fixture läuft), sonst wäre für BTC/USDT längst ein Kurs gescriptet."""
-    sources["okx"].add("BTC/USDT", currency="USDT")  # Instrument bekannt, aber kein Kurs
+    ``btc``-Fixture läuft), sonst wäre für BTC/USDC längst ein Kurs gescriptet."""
+    sources["okx"].add("BTC/USDC", currency="USDC")  # Instrument bekannt, aber kein Kurs
     btc_id = await asset_id(session, "BTC")
     signal = _signal(strategy.id, btc_id)
     proposal = await create_proposal(session, signal, mode="paper")
@@ -296,7 +296,7 @@ async def test_kurs_lesbar_setzt_price_age_seconds(
     """Positiver Gegenfall zu Schritt 1.4: ein lesbarer Kurs wird akzeptiert und das
     Kursalter eingefroren -- unabhängig davon, ob Stufe 1 später an einem anderen
     Limit scheitert."""
-    prices["okx"].price("BTC/USDT", 50000, observed_at=clock.current)
+    prices["okx"].price("BTC/USDC", 50000, observed_at=clock.current)
     clock.advance(5)
     signal = _signal(strategy.id, btc)
     proposal = await create_proposal(session, signal, mode="paper")
@@ -391,8 +391,8 @@ async def test_strategie_ohne_portfolio_wird_fail_closed_abgelehnt(session, mark
 
 
 # --- Nachkaufen in den Verlust, HED-8 Tabelle 4.2 (HED-66) --------------------------------
-# BTC/USDT steht in der ``prices``-Fixture fest auf 50.000 -- avg_cost weit darüber bzw.
-# darunter erzeugt eindeutig Verlust bzw. Gewinn, unabhängig vom genauen EUR/USDT-Kurs.
+# BTC/USDC steht in der ``prices``-Fixture fest auf 50.000 -- avg_cost weit darüber bzw.
+# darunter erzeugt eindeutig Verlust bzw. Gewinn, unabhängig vom genauen EUR/USDC-Kurs.
 
 
 async def test_sammle_kontext_erkennt_nachkauf_in_verlust_bei_erhoehung_mit_verlustposition(

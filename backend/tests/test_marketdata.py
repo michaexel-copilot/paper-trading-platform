@@ -662,7 +662,7 @@ async def test_quote_endpoint_with_bid_and_ask(client, session, prices):
     body = (await client.get(f"/api/market/quote/{btc}")).json()
 
     assert (body["last"], body["bid"], body["ask"]) == ("50000", "49990", "50010")
-    assert body["source"] == "okx" and body["currency"] == "USDT"
+    assert body["source"] == "okx" and body["currency"] == "USDC"
     assert body["last_price_only"] is False
     assert body["fresh"] is True and body["market_open"] is True and body["observed_at"]
 
@@ -762,8 +762,8 @@ async def test_history_before_the_first_bar_is_empty_not_an_error(client, sessio
 
 
 async def test_hourly_history_defaults_to_thirty_days(client, session, sources, clock):
-    sources["okx"].add("BTC/USDT", currency="USDT")
-    sources["okx"].bars[("BTC/USDT", "1h")] = daily_bars(clock() - timedelta(days=45), [1] * 46)
+    sources["okx"].add("BTC/USDC", currency="USDC")
+    sources["okx"].bars[("BTC/USDC", "1h")] = daily_bars(clock() - timedelta(days=45), [1] * 46)
     btc = await asset_id(session, "BTC")
 
     body = (await client.get(f"/api/market/history/{btc}?resolution=1h")).json()

@@ -141,7 +141,7 @@ async def test_kurs_zu_alt_wird_abgelehnt(session, market, clock, prices, freige
     # FakeSource liefert ohne festen observed_at sonst bei jedem Abruf einen "frischen"
     # Zeitstempel -- hier einmal fixieren, um Alter unabhängig vom Abrufzeitpunkt zu
     # simulieren (Schritt 2.6 misst gegen den Quell-Zeitstempel, nicht den Abruf).
-    prices["okx"].price("BTC/USDT", 50000, observed_at=clock.current)
+    prices["okx"].price("BTC/USDC", 50000, observed_at=clock.current)
     clock.advance(31)  # über die 30s-Kursfrische-Grenze für Krypto
     ok = await pruefe_stufe2(session, market, _order(freigegebener_vorschlag))
     await session.commit()
@@ -155,7 +155,7 @@ async def test_kurs_ausserhalb_band_wird_abgelehnt(
     session, market, prices, freigegebener_vorschlag
 ):
     await _gestartet(session, freigegebener_vorschlag)
-    prices["okx"].price("BTC/USDT", 55000)  # weit außerhalb des Bands um 50.000
+    prices["okx"].price("BTC/USDC", 55000)  # weit außerhalb des Bands um 50.000
     ok = await pruefe_stufe2(session, market, _order(freigegebener_vorschlag))
     await session.commit()
     assert ok is False
@@ -169,7 +169,7 @@ async def test_kurs_unter_dem_stop_wird_abgelehnt(
     """Kurs noch im (sehr weiten) Band, aber bereits unter dem Stop -- Bedingung (ii)
     greift unabhängig von Bedingung (i), Abschnitt 6.3."""
     await _gestartet(session, freigegebener_vorschlag)
-    prices["okx"].price("BTC/USDT", 47000)  # unter Stop 47.500
+    prices["okx"].price("BTC/USDC", 47000)  # unter Stop 47.500
     ok = await pruefe_stufe2(session, market, _order(freigegebener_vorschlag))
     await session.commit()
     assert ok is False
@@ -211,7 +211,7 @@ async def test_nicht_proposal_gebundene_order_prueft_nur_kurs(session, market, p
     ein lesbarer, frischer Kurs (Entwurf 6.2 gilt wörtlich für board-freigegebene
     Einstiege/Erhöhungen)."""
     order = VersandOrder(
-        gattung="stornierung", strategie_schluessel="s1", exchange="okx", symbol="BTC/USDT",
+        gattung="stornierung", strategie_schluessel="s1", exchange="okx", symbol="BTC/USDC",
         side="sell", quantity=D("0.01"), order_type="market",
     )
     ok = await pruefe_stufe2(session, market, order)
