@@ -21,8 +21,9 @@ AKTIONEN = ("gesetzt", "aufgehoben")
 
 # Auslöser, die eine Aktion dokumentieren. "board" / "cro" sind manuelle Aktionen nach
 # Abschnitt 9.1/9.4. "stufe1"/"stufe2" sind die Kill-Switch-Stufen selbst (Abschnitt
-# 9.1-Tabelle). Die übrigen fünf sind die automatischen Setzen-Auslöser aus Abschnitt
-# 9.5 -- für sie existiert strukturell keine Aufheben-Variante (siehe app.kill_switch).
+# 9.1-Tabelle). Die übrigen sind automatische Setzen-Auslöser (Abschnitt 9.5 plus die
+# drei B-12-Auslöser, HED-84, Entwurf Abschnitt 11.1) -- für keinen von ihnen existiert
+# strukturell eine Aufheben-Variante (siehe app.kill_switch).
 AUSLOESER = (
     "board",
     "cro",
@@ -33,6 +34,10 @@ AUSLOESER = (
     "order_ohne_versandengpass_eintrag",
     "protokoll_nicht_schreibbar",
     "limitliste_nicht_lesbar",
+    # B-12 (HED-84, Entwurf Abschnitt 11.1):
+    "stop_orderbuch_abweichung",
+    "stop_orderbuch_abgleich_fehlgeschlagen",
+    "pflicht_stop_nicht_platziert",
 )
 
 

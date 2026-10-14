@@ -32,7 +32,11 @@ from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen, StrategieS
 log = logging.getLogger(__name__)
 
 # Entwurf 9.1: wer das firmenweite Kennzeichen setzen darf -- Board/CRO manuell, dazu
-# die fünf automatischen Auslöser aus Abschnitt 9.5.
+# die fünf automatischen Auslöser aus Abschnitt 9.5 und die drei B-12-Auslöser (HED-84,
+# Entwurf Abschnitt 11.1): der Abgleich ("stop_orderbuch_abweichung"), sein Ausbleiben
+# ("stop_orderbuch_abgleich_fehlgeschlagen") und der scheiternde Pflicht-Stop
+# ("pflicht_stop_nicht_platziert", F-11 -- der eigentliche V2-Wächter für das
+# Zeitfenster zwischen Fill und Stop).
 FIRMENWEIT_SETZEN_AUSLOESER = frozenset(
     {
         "board",
@@ -43,6 +47,9 @@ FIRMENWEIT_SETZEN_AUSLOESER = frozenset(
         "order_ohne_versandengpass_eintrag",
         "protokoll_nicht_schreibbar",
         "limitliste_nicht_lesbar",
+        "stop_orderbuch_abweichung",
+        "stop_orderbuch_abgleich_fehlgeschlagen",
+        "pflicht_stop_nicht_platziert",
     }
 )
 # Entwurf 9.1: wer das Kennzeichen einer einzelnen Strategie setzen darf. Keiner der

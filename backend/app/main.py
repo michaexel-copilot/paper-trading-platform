@@ -1,6 +1,8 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
+from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -22,8 +24,11 @@ from app.notify import notify_new_proposal
 from app.schluessel import pruefe_schluesseltrennung_beim_start
 from app.schluesseltrennung_laufend import pruefe_einmal as pruefe_schluesseltrennung_einmal
 from app.startgatter import pruefe_installation_marker, pruefe_matcher_fuer_live_artefakt
+from app.trading import stop_orderbuch_abgleich, stop_pflicht, versand_treiber
 from app.trading.matcher import Matcher, ProcessLock
 from app.trading.proposals import FRISTWAECHTER_INTERVAL_SECONDS, verfalle_ueberfaellige_vorschlaege
+from app.trading.stufe2 import baue_versandengpass
+from app.trading.versandengpass import Versandengpass
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +87,54 @@ async def _pruefe_schluesseltrennung_laufend(session_factory, interval_seconds: 
             await pruefe_schluesseltrennung_einmal(session_factory)
         except Exception:
             log.exception("Laufende Schlüsseltrennungs-Prüfung fehlgeschlagen")
+
+
+async def _versand_treiber_loop(
+    session_factory, engpass: Versandengpass, interval_seconds: int
+) -> None:
+    """B-12 (HED-84, Entwurf Abschnitt 5.1): treibt board-freigegebene Vorschläge Z7
+    -> Z10. ``treibe_einmal`` fängt Fehler je Vorschlag bereits selbst ab; dieses
+    try/except ist nur gegen einen unerwarteten Fehler im Durchlauf selbst."""
+    while True:
+        try:
+            await versand_treiber.treibe_einmal(session_factory, engpass)
+        except Exception:
+            log.exception("Versand-Treiber fehlgeschlagen")
+        await asyncio.sleep(interval_seconds)
+
+
+async def _stop_pflicht_loop(
+    session_factory, engpass: Versandengpass, interval_seconds: int, pflicht_stop_nachfrist
+) -> None:
+    """B-12 (Entwurf Abschnitt 6.1): Fill-Erkennung und Pflicht-Stop-Platzierung in
+    einem gemeinsamen Durchlauf -- siehe Moduldokumentation von
+    ``app.trading.stop_pflicht``."""
+    while True:
+        try:
+            await stop_pflicht.pruefe_fills_einmal(
+                session_factory, engpass, pflicht_stop_nachfrist=pflicht_stop_nachfrist
+            )
+        except Exception:
+            log.exception("Fill-Erkennung/Pflicht-Stop-Platzierung fehlgeschlagen")
+        await asyncio.sleep(interval_seconds)
+
+
+async def _stop_orderbuch_abgleich_loop(
+    session_factory, engpass: Versandengpass, interval_seconds: int, toleranz: Decimal, totmannfrist
+) -> None:
+    """B-12 (Entwurf Abschnitt 10.1): täglicher Abgleich. ``pruefe_einmal`` setzt bei
+    Abweichung/Fehlschlag/Ausbleiben bereits selbst das firmenweite Sperrkennzeichen."""
+    while True:
+        try:
+            await stop_orderbuch_abgleich.pruefe_einmal(
+                session_factory,
+                engpass,
+                mengen_rundungstoleranz=toleranz,
+                totmannfrist=totmannfrist,
+            )
+        except Exception:
+            log.exception("Stop-Orderbuch-Abgleich fehlgeschlagen")
+        await asyncio.sleep(interval_seconds)
 
 
 async def _notify_new_proposals(session_factory, settings: Settings) -> None:
@@ -170,6 +223,52 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
         if settings.run_matcher:
             matcher.start()
             background.append(asyncio.create_task(_notify_new_proposals(session_factory, settings)))
+            # B-12 (HED-84): Versand-Treiber, Fill-Erkennung/Pflicht-Stop und
+            # täglicher Abgleich laufen nur in diesem Prozess (Festlegung F-3,
+            # gleiche Begründung wie beim Matcher selbst) -- kein zweiter Prozess
+            # derselben Installation darf denselben Vorschlag parallel versenden.
+            engpass = baue_versandengpass(service, tranche=settings.freigegebene_tranche)
+            pflicht_stop_nachfrist = timedelta(seconds=settings.pflicht_stop_nachfrist_sekunden)
+            totmannfrist = timedelta(seconds=settings.stop_orderbuch_totmannfrist_sekunden)
+            mengen_toleranz = Decimal(settings.stop_mengen_rundungstoleranz)
+            # Entwurf Abschnitt 10.6: Totmannschalter zusätzlich beim Prozessstart
+            # geprüft, nicht erst nach dem ersten vollen 24h-Intervall -- sonst würde
+            # ein lange gestoppter Prozess das erst einen ganzen Tag nach dem
+            # Wiederanlauf merken.
+            await stop_orderbuch_abgleich.pruefe_einmal(
+                session_factory,
+                engpass,
+                mengen_rundungstoleranz=mengen_toleranz,
+                totmannfrist=totmannfrist,
+            )
+            background.append(
+                asyncio.create_task(
+                    _versand_treiber_loop(
+                        session_factory, engpass, settings.versand_treiber_intervall_sekunden
+                    )
+                )
+            )
+            background.append(
+                asyncio.create_task(
+                    _stop_pflicht_loop(
+                        session_factory,
+                        engpass,
+                        settings.stop_pflicht_intervall_sekunden,
+                        pflicht_stop_nachfrist,
+                    )
+                )
+            )
+            background.append(
+                asyncio.create_task(
+                    _stop_orderbuch_abgleich_loop(
+                        session_factory,
+                        engpass,
+                        settings.stop_orderbuch_abgleich_intervall_sekunden,
+                        mengen_toleranz,
+                        totmannfrist,
+                    )
+                )
+            )
         try:
             yield
         finally:

@@ -12,6 +12,7 @@ from app.models.portfolios import Portfolio, PortfolioAsset, Position, ValueSnap
 from app.models.proposals import Proposal, ProposalEvent
 from app.models.slippage import SlippageMessungEintrag
 from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen, StrategieSperrkennzeichen
+from app.models.stop_order import StopAbgleichLauf, StopOrderBuch
 from app.models.strategies import Strategy
 from app.models.versandengpass import VersandEngpassEintrag
 from app.models.vorschlag_unterdrueckung import VorschlagUnterdrueckt
@@ -36,6 +37,8 @@ __all__ = [
     "ProposalEvent",
     "SlippageMessungEintrag",
     "SperrkennzeichenProtokoll",
+    "StopAbgleichLauf",
+    "StopOrderBuch",
     "Strategy",
     "StrategieSperrkennzeichen",
     "Trade",

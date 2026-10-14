@@ -194,3 +194,34 @@ async def test_firmenweit_gesetzt_uebersteuert_offenes_strategie_kennzeichen(ses
     assert await ist_firmenweit_gesperrt(session) is True
     assert await ist_strategie_gesperrt(session, "s1") is False
     assert await doppelpruefung_offen(session, "s1") is False
+
+
+# --- B-12 (HED-84, Entwurf Abschnitt 11): drei neue automatische Auslöser, P-10 -------
+
+_B12_AUSLOESER = (
+    "stop_orderbuch_abweichung",
+    "stop_orderbuch_abgleich_fehlgeschlagen",
+    "pflicht_stop_nicht_platziert",
+)
+
+
+@pytest.mark.parametrize("ausloeser", _B12_AUSLOESER)
+async def test_b12_ausloeser_wird_von_setze_firmenweit_angenommen(session, ausloeser):
+    await setze_firmenweit(session, ausloeser=ausloeser, begruendung="Testgrund B-12")
+    assert await ist_firmenweit_gesperrt(session) is True
+    zeilen = await _protokoll(session, kennzeichen_typ="firmenweit", ausloeser=ausloeser)
+    assert len(zeilen) == 1
+
+
+@pytest.mark.parametrize("ausloeser", _B12_AUSLOESER)
+def test_b12_ausloeser_ist_in_app_models_kill_switch_ausloeser(ausloeser):
+    from app.models.kill_switch import AUSLOESER
+
+    assert ausloeser in AUSLOESER
+
+
+@pytest.mark.parametrize("ausloeser", _B12_AUSLOESER)
+def test_b12_ausloeser_hat_strukturell_keine_aufheben_variante(ausloeser):
+    from app.kill_switch import AUFHEBEN_AUSLOESER
+
+    assert ausloeser not in AUFHEBEN_AUSLOESER
