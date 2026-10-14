@@ -12,7 +12,7 @@ from app.db import SessionFactory
 from app.marketdata.service import MarketService
 from app.models import Order, Portfolio, ValueSnapshot
 from app.trading.orders import evaluate
-from app.trading.valuation import value_portfolio
+from app.trading.valuation import breakdown_json, value_portfolio
 
 log = logging.getLogger(__name__)
 
@@ -102,14 +102,17 @@ class Matcher:
             portfolios = (await session.scalars(select(Portfolio))).all()
             # Value everything first: quotes are fetched over the network, and no
             # write transaction may be open while waiting for them.
-            values = {
-                portfolio.id: (await value_portfolio(session, self.market, portfolio)).total_value
+            valuations = {
+                portfolio.id: await value_portfolio(session, self.market, portfolio)
                 for portfolio in portfolios
                 if portfolio.id not in done
             }
-            for portfolio_id, value in values.items():
+            for portfolio_id, valuation in valuations.items():
                 session.add(
-                    ValueSnapshot(portfolio_id=portfolio_id, at=now, value=value, kind="daily")
+                    ValueSnapshot(
+                        portfolio_id=portfolio_id, at=now, value=valuation.total_value,
+                        kind="daily", breakdown=breakdown_json(valuation),
+                    )
                 )
                 written += 1
             await session.commit()

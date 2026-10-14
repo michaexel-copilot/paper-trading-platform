@@ -173,6 +173,33 @@ async def value_portfolio(
     )
 
 
+def breakdown_json(valuation: Valuation) -> dict:
+    """Je gehaltenem Asset Menge, Kurs in Quote-Währung und FX-Kurs zur
+    Basiswährung -- die Basis für die Tages-P&L-Aufteilung in Handelsergebnis und
+    Währungseffekt (B-11/HED-83, ``app.trading.risikoauszug``). FX-Kurs wird aus
+    ``price_base / price`` rückgerechnet statt erneut abgefragt, damit der
+    Schnappschuss exakt zu den bereits gezogenen Kursen passt. Positionen ohne
+    lesbaren Kurs (``mark.price`` oder ``mark.price_base`` ``None``) fehlen in der
+    Ausgabe -- der Aufrufer behandelt das wie eine neu eröffnete Position ohne
+    Tagesanfangs-Basis (keine Aufteilung für diese Position, nicht fail closed für
+    den ganzen Schnappschuss)."""
+    positions = {}
+    for position in valuation.positions:
+        if (
+            position.mark.price is None
+            or position.mark.price_base is None
+            or position.mark.price == 0
+        ):
+            continue
+        positions[str(position.asset.id)] = {
+            "quantity": str(position.quantity),
+            "price_quote": str(position.mark.price),
+            "quote_currency": position.mark.currency,
+            "fx_rate": str(position.mark.price_base / position.mark.price),
+        }
+    return {"positions": positions}
+
+
 async def marks_for_snapshot(
     session: AsyncSession, market: MarketService, portfolio: Portfolio, also: Asset | None = None
 ) -> dict[int, Decimal]:

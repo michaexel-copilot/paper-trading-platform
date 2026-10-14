@@ -119,6 +119,12 @@ class RisikoKontext:
     # Basiswährung des Portfolios. ``None`` nur wenn ``nachkauf_in_verlust_pruefbar``
     # und der Kurs der bestehenden Position nicht lesbar ist (fail closed).
     position_unrealized_vor_trade_eur: Decimal | None
+    # Barbestand außerhalb der Börse (HED-8 Abschnitt 4.1, B-11/HED-83): im
+    # Papierbetrieb immer 0, weil es keine echte externe Bankreserve gibt -- das
+    # Feld existiert für den Live-Pfad (Gate C), auf dem eine Installation diesen
+    # Wert künftig pflegen kann. Default 0, damit bestehende Aufrufer (vor B-11)
+    # unverändert bleiben.
+    cash_ausserhalb_boerse: Decimal = Decimal(0)
 
 
 def _risiko_je_trade(ctx: RisikoKontext) -> LimitErgebnis:
@@ -325,18 +331,39 @@ def _offene_positionen_zahl(ctx: RisikoKontext) -> LimitErgebnis:
     )
 
 
+def _mindest_barbestand(ctx: RisikoKontext) -> LimitErgebnis:
+    """HED-8 Abschnitt 4.1, B-11/HED-83: Barbestand (Börse + außerhalb) muss
+    >= 30% NAV UND >= 3.000 € sein -- ein Mindestfloor, nicht eine Obergrenze wie
+    die übrigen Limits dieses Moduls. ``auslastung_pct`` wird deshalb umgekehrt
+    gebildet (erforderlicher Mindestbetrag / tatsächlicher Bestand): genau wie
+    überall sonst in diesem Modul bedeutet > 100% einen Bruch, hier: der
+    Mindestbestand übersteigt den tatsächlichen Bestand. Immer berechenbar -- NAV
+    und Barbestand sind in jedem ``RisikoKontext`` vorhandene Pflichtfelder, keine
+    optional lesbaren Marktdaten.
+    """
+    barbestand = ctx.cash + ctx.cash_ausserhalb_boerse
+    mindestbetrag = max(Decimal("0.30") * ctx.nav, Decimal("3000"))
+    auslastung = (mindestbetrag / barbestand * HUNDERT) if barbestand > 0 else Decimal(999)
+    return LimitErgebnis(
+        "mindest_barbestand", berechenbar=True, gebrochen=barbestand < mindestbetrag,
+        auslastung_pct=auslastung,
+        begruendung="Barbestand (Börse + außerhalb) >= max(30% NAV, 3.000 €), HED-8 "
+        "Abschnitt 4.1 -- Eingabegrößen aus dem eigenen Buch, B-11/HED-83",
+    )
+
+
 # Limits, für die dieser Installation heute die nötigen Daten oder Infrastruktur
 # fehlen -- jeder einzeln benannt, mit dem fehlenden Baustein, nicht pauschal.
 # Festlegung 6.1.3: nicht berechenbar = gebrochen, also fail closed, nicht "optimistisch
 # als bestanden werten". Jede Zeile hier ist ein Kandidat für ein eigenes Folgeissue.
 _NICHT_VERDRAHTETE_LIMITS: tuple[tuple[str, str], ...] = (
-    ("mindest_barbestand",
-     "Reserve außerhalb der Börse (HED-8 Tabelle 4.1) wird nirgends in der Plattform "
-     "erfasst; ohne sie ist der Gesamt-Barbestand nicht vollständig, nur der "
-     "Börsenanteil"),
     ("boersenguthaben_ueberschuss",
-     "Dieselbe fehlende Reserve-Erfassung macht 'Tranche + 10%' gegen den GESAMTEN "
-     "Barbestand nicht prüfbar, nur gegen den Börsenanteil"),
+     "Reserve außerhalb der Börse wird seit B-11/HED-83 erfasst "
+     "(RisikoKontext.cash_ausserhalb_boerse, im Papierbetrieb immer 0 mangels "
+     "echter Bankreserve) -- die genaue Formel 'Tranche + 10%' ist aus den mir "
+     "vorliegenden Unterlagen nicht zweifelsfrei abgeleitet (Richtung/Bezugsgröße "
+     "ungeklärt); eigenes Folgeissue, um keine ungeprüfte Risikokennzahl zu "
+     "verdrahten"),
     ("eine_strategie_anteil",
      "Keine Zuordnung Proposal/Order -> Kapitalanteil je Strategie gegenüber anderen "
      "Strategien im selben Portfolio; Strategy-Modell (HED-41) trägt kein Kapital-Soll"),
@@ -423,6 +450,7 @@ _BERECHNETE_PRUEFUNGEN = (
     _harte_kapitalgrenze,
     _korrelation_zu_offenen_positionen,
     _offene_positionen_zahl,
+    _mindest_barbestand,
     _nachkauf_in_verlust,
 )
 

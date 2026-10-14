@@ -50,11 +50,12 @@ def _ergebnis(ergebnisse, limit: str):
 # --- Festlegung 6.1.3: jedes nicht verdrahtete Limit ist benannt, fail closed -------------
 
 
-def test_vollstaendig_konformer_kontext_bricht_trotzdem_am_ersten_nicht_verdrahteten_limit():
-    """Dokumentiert ehrlich den Stand dieser PR: kein einziger Vorschlag besteht Stufe 1
-    vollständig, bis die in app.risikolimits benannten Folgeissues (Reserve außerhalb
-    der Börse, Orderrate, ...) gebaut sind. Das ist Festlegung 6.1.3 (fail closed),
-    keine Lücke dieser Prüfung."""
+def test_vollstaendig_konformer_kontext_bricht_trotzdem_an_einem_nicht_verdrahteten_limit():
+    """Dokumentiert ehrlich den Stand dieser PR: ``mindest_barbestand`` ist seit
+    B-11/HED-83 eine echte Berechnung (cash=9.000 bei nav=10.000 besteht sie klar),
+    aber andere in app.risikolimits benannte Folgeissues (Orderrate,
+    Verlustserie je Strategie, ...) fehlen weiterhin -- Festlegung 6.1.3 (fail
+    closed), keine Lücke dieser Prüfung."""
     ergebnisse = pruefe_alle_limits(_basiskontext())
     gebrochene = [e.limit for e in ergebnisse if e.gebrochen]
     berechnete_namen = {
@@ -63,14 +64,15 @@ def test_vollstaendig_konformer_kontext_bricht_trotzdem_am_ersten_nicht_verdraht
         "drawdown_vom_hoechststand", "tagesverlust", "verlust_7_tage",
         "kalendermonatsverlust", "harte_kapitalgrenze",
         "korrelierte_gruppe", "offene_positionen_zahl", "nachkauf_in_verlust",
+        "mindest_barbestand",
     }
     for name in berechnete_namen:
         ergebnis = _ergebnis(ergebnisse, name)
         assert ergebnis.gebrochen is False, f"{name} sollte in diesem Kontext bestehen"
     # Mindestens ein nicht verdrahtetes Limit ist vorhanden und gebrochen.
-    assert "mindest_barbestand" in gebrochene
+    assert "boersenguthaben_ueberschuss" in gebrochene
     nicht_berechenbare = [e for e in ergebnisse if not e.berechenbar]
-    assert len(nicht_berechenbare) >= 17  # vollständige Liste in app.risikolimits
+    assert len(nicht_berechenbare) >= 16  # vollständige Liste in app.risikolimits
 
 
 def test_jedes_limit_kommt_genau_einmal_vor():
@@ -166,6 +168,51 @@ def test_offene_positionen_zahl_an_b1_grenze_vier_besteht():
     ctx = _basiskontext(tranche="B1", anzahl_offener_positionen=4)
     ergebnis = _ergebnis(pruefe_alle_limits(ctx), "offene_positionen_zahl")
     assert ergebnis.gebrochen is False
+
+
+# --- Mindest-Barbestand, HED-8 Abschnitt 4.1 (B-11/HED-83) --------------------------------
+
+
+def test_mindest_barbestand_ueber_beiden_schwellen_besteht():
+    # nav=10.000 -> 30% = 3.000, zusammen mit der festen 3.000-€-Schwelle ist die
+    # Grenze hier 3.000; cash=9.000 liegt klar darüber.
+    ctx = _basiskontext(nav=D(10000), cash=D(9000))
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "mindest_barbestand")
+    assert ergebnis.berechenbar is True
+    assert ergebnis.gebrochen is False
+
+
+def test_mindest_barbestand_unter_30_prozent_nav_ist_gebrochen():
+    # nav=20.000 -> 30% = 6.000 (strenger als die feste 3.000-€-Schwelle); cash=5.000
+    # unterschreitet nur die NAV-bezogene Schwelle.
+    ctx = _basiskontext(nav=D(20000), cash=D(5000))
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "mindest_barbestand")
+    assert ergebnis.gebrochen is True
+
+
+def test_mindest_barbestand_unter_3000_euro_ist_gebrochen_auch_bei_kleinem_nav():
+    # nav=1.000 -> 30% = 300, aber die feste 3.000-€-Schwelle gilt trotzdem (HED-8:
+    # "UND", kein "ODER") -- cash=500 unterschreitet sie.
+    ctx = _basiskontext(nav=D(1000), cash=D(500))
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "mindest_barbestand")
+    assert ergebnis.gebrochen is True
+
+
+def test_mindest_barbestand_zaehlt_reserve_ausserhalb_der_boerse_mit():
+    # cash allein (2.000) reicht nicht für die 3.000-€-Schwelle, mit der externen
+    # Reserve (1.500) zusammen schon.
+    ctx = _basiskontext(nav=D(1000), cash=D(2000), cash_ausserhalb_boerse=D(1500))
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "mindest_barbestand")
+    assert ergebnis.gebrochen is False
+
+
+def test_mindest_barbestand_ist_immer_berechenbar():
+    """Anders als fast jedes andere Limit hier braucht ``mindest_barbestand`` keinen
+    Marktkurs -- NAV und Barbestand sind Pflichtfelder in jedem RisikoKontext."""
+    ctx = _basiskontext(nav=D(0), cash=D(0))
+    ergebnis = _ergebnis(pruefe_alle_limits(ctx), "mindest_barbestand")
+    assert ergebnis.berechenbar is True
+    assert ergebnis.gebrochen is True
 
 
 # --- Hebel und Short-Verbot, HED-8 Abschnitt 4.5 (CRO-Nachforderung aus HED-61) -----------

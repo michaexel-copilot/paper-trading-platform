@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import JSON, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.dbtypes import Money, UtcDateTime, utcnow
@@ -20,6 +20,11 @@ class Portfolio(Base):
     cash: Mapped[Decimal] = mapped_column(Money)
     realized_pnl: Mapped[Decimal] = mapped_column(Money, default=Decimal(0))
     fees_paid: Mapped[Decimal] = mapped_column(Money, default=Decimal(0))
+    # Barbestand außerhalb der Börse (HED-8 Abschnitt 4.1, B-11/HED-83). Im
+    # Papierbetrieb immer 0 -- es gibt keine echte externe Bankreserve, nur den
+    # simulierten Börsenbestand in ``cash``. Das Feld existiert für den Live-Pfad
+    # (Gate C); diese PR liefert keine API, um es zu setzen (siehe PR-Beschreibung).
+    external_reserve_cash: Mapped[Decimal] = mapped_column(Money, default=Decimal(0))
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
 
 
@@ -61,3 +66,9 @@ class ValueSnapshot(Base):
     at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     value: Mapped[Decimal] = mapped_column(Money)
     kind: Mapped[str] = mapped_column(String(16))  # created | fill | daily
+    # Je gehaltenem Asset Menge, Kurs in Quote-Währung und FX-Kurs zur Basiswährung,
+    # zum Zeitpunkt dieses Schnappschusses (B-11/HED-83, app.trading.valuation.
+    # breakdown_json) -- Basis für die Tages-P&L-Aufteilung in Handelsergebnis und
+    # Währungseffekt. Nur für ``kind="daily"`` befüllt; ``None`` bei älteren Zeilen
+    # (vor B-11) und bei "created"/"fill".
+    breakdown: Mapped[dict | None] = mapped_column(JSON, nullable=True)

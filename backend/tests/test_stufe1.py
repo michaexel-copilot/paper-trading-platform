@@ -326,12 +326,9 @@ async def test_erhoehung_hat_passende_position(
     session, portfolio, btc, position_quantity, richtung, erwartet
 ):
     """Schritt 1.13 (HED-65), direkter Test der Hilfsfunktion statt über den vollen
-    ``lauf_stufe1``-Pfad: Das Platzhalter-Limit ``mindest_barbestand`` (HED-8 Tabelle
-    4.1, noch nicht verdrahtet -- B-11) ist heute *immer* gebrochen (Festlegung
-    6.1.3, fail closed) und steht in der Katalogreihenfolge nach allen echten Limits,
-    aber vor Schritt 1.13 -- kein Vorschlag erreicht Schritt 1.13 je über
-    ``lauf_stufe1`` bis B-11 gebaut ist. Die Prüflogik selbst ist trotzdem jetzt
-    vorhanden und hier isoliert verifiziert, siehe auch
+    ``lauf_stufe1``-Pfad -- unabhängig vom Entwicklungsstand der übrigen Limits aus
+    app.risikolimits (B-11/HED-83 hat ``mindest_barbestand`` inzwischen verdrahtet,
+    andere Folgeissues wie Orderrate fehlen weiterhin). Siehe auch
     tests/test_risikolimits.py für dasselbe Vorgehen bei den reinen Katalogtests."""
     if position_quantity is not None:
         session.add(Position(portfolio_id=portfolio.id, asset_id=btc,
@@ -345,12 +342,11 @@ async def test_erhoehung_hat_passende_position(
 async def test_lauf_stufe1_lehnt_erhoehung_ohne_passende_position_ab_sobald_limits_bestehen(
     session, market, prices, portfolio, strategy, btc, monkeypatch
 ):
-    """Integrationstest für Schritt 1.13 über den vollen ``lauf_stufe1``-Pfad: Da
-    ``mindest_barbestand`` & Co. (B-11, noch nicht gebaut) heute jeden Vorschlag vor
-    Schritt 1.13 abfangen würden, wird die Katalogfunktion für diesen Test durch eine
-    leere Liste ersetzt (Stand "alle Limits aus HED-33 bestehen") -- so wird sichtbar,
-    dass Schritt 1.13 selbst innerhalb von ``lauf_stufe1`` korrekt verdrahtet ist,
-    unabhängig vom Entwicklungsstand der anderen Limits."""
+    """Integrationstest für Schritt 1.13 über den vollen ``lauf_stufe1``-Pfad: die
+    Katalogfunktion wird durch eine leere Liste ersetzt (Stand "alle Limits
+    bestehen"), damit dieser Test unabhängig vom Entwicklungsstand der einzelnen
+    Limits aus app.risikolimits bleibt und ausschließlich Schritt 1.13 selbst
+    innerhalb von ``lauf_stufe1`` prüft."""
     import app.trading.stufe1 as stufe1_module
 
     monkeypatch.setattr(stufe1_module, "pruefe_alle_limits", lambda ctx: [])
