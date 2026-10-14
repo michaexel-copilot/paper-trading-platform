@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from app.dbtypes import utcnow
-from app.models import Portfolio, Strategy
+from app.models import Portfolio, Position, Strategy
 from app.models.kill_switch import SperrkennzeichenProtokoll
 from app.models.proposals import (
     STATE_BOARD_FREIGEGEBEN,
@@ -28,7 +28,7 @@ from app.trading.papier.okx_demo import OrderStatusErgebnis
 from app.trading.proposals import Signal, create_proposal, transition
 from app.trading.stop_pflicht import _pruefe_eskalation, pruefe_fills_einmal
 from app.trading.versandengpass import Versandengpass
-from tests.conftest import D, create_portfolio
+from tests.conftest import D, asset_id, create_portfolio
 
 NACHFRIST = timedelta(seconds=120)
 
@@ -44,6 +44,17 @@ def papier_betriebsart(betriebsart):
     """``StopOrderBuch``/``StopAbgleichLauf`` tragen ``BetriebsartMixin`` (Auflage 1)
     -- jede Zeile braucht eine gesetzte Betriebsart."""
     betriebsart("papier")
+
+
+@pytest.fixture(autouse=True)
+def mit_schluessel(monkeypatch):
+    """Startgatter (Auflage 2) verlangt einen lesbaren DEMO-Schlüssel, bevor
+    ``Versandengpass``/``stop_pflicht`` überhaupt an die Gegenstelle gehen --
+    auch wenn ``_FakeEngpass`` den eigentlichen Netzzugriff ersetzt (Vorbild:
+    ``mit_schluessel`` in test_versand_treiber.py)."""
+    monkeypatch.setenv("OKX_DEMO_API_KEY", "demo-key")
+    monkeypatch.setenv("OKX_DEMO_API_SECRET", "demo-secret")
+    monkeypatch.delenv("OKX_LIVE_API_KEY", raising=False)
 
 
 @pytest.fixture
@@ -325,3 +336,87 @@ async def test_mit_offenem_stop_keine_eskalation_trotz_abgelaufener_nachfrist(
     await session.commit()
 
     assert await ist_firmenweit_gesperrt(session) is False
+
+
+# --- E-12 (R-5, CRO-Nachforderung HED-107): Stop zu geschlossener Position --------
+
+
+async def _gefuellter_vorschlag_mit_stop(
+    session, session_factory, strategy, *, direction="long"
+) -> tuple:
+    """Bringt einen Vorschlag bis Z11 (vollständig gefüllt, Stop offen) -- gemeinsamer
+    Aufsatzpunkt für die drei E-12-Fälle."""
+    proposal = await _versandter_vorschlag(session, strategy, direction=direction)
+    engpass = _FakeEngpass()
+    engpass.plane_status(proposal.gegenstellen_order_id, _status("gefuellt", "0.5"))
+    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await session.refresh(proposal)
+    assert proposal.state == STATE_GEFUELLT
+    engpass.sende_calls.clear()  # nur die zweite Durchführung (E-12) ist der Testgegenstand
+    return proposal, engpass
+
+
+async def test_position_geschlossen_storniert_stop(session, session_factory, strategy, portfolio):
+    """Auto-Exit hat die Position vollständig geschlossen (Position.quantity == 0) --
+    der verwaiste Stop wird automatisch storniert, nicht erst vom nächsten täglichen
+    Abgleich als Waise gemeldet (sonst unechter Stufe-2-Alarm, R-5)."""
+    proposal, engpass = await _gefuellter_vorschlag_mit_stop(session, session_factory, strategy)
+    btc_id = await asset_id(session, "BTC")
+    session.add(
+        Position(portfolio_id=portfolio.id, asset_id=btc_id, quantity=D("0"), avg_cost=D("0"))
+    )
+    await session.commit()
+
+    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+
+    storno_calls = [o for o in engpass.sende_calls if o.gattung == "stornierung"]
+    assert len(storno_calls) == 1
+    assert storno_calls[0].ziel_order_id is not None
+
+    buch = await session.scalar(
+        select(StopOrderBuch).where(StopOrderBuch.anlass_proposal_id == proposal.id)
+    )
+    await session.refresh(buch)
+    assert buch.zustand == "storniert"
+    assert buch.beendet_at is not None
+
+
+async def test_position_noch_offen_kein_storno(session, session_factory, strategy, portfolio):
+    """Position besteht unverändert fort (Auto-Exit hat nichts geschlossen) -- der
+    Stop bleibt offen."""
+    proposal, engpass = await _gefuellter_vorschlag_mit_stop(session, session_factory, strategy)
+    btc_id = await asset_id(session, "BTC")
+    session.add(
+        Position(portfolio_id=portfolio.id, asset_id=btc_id, quantity=D("0.5"), avg_cost=D("50000"))
+    )
+    await session.commit()
+
+    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+
+    assert not any(o.gattung == "stornierung" for o in engpass.sende_calls)
+    buch = await session.scalar(
+        select(StopOrderBuch).where(StopOrderBuch.anlass_proposal_id == proposal.id)
+    )
+    await session.refresh(buch)
+    assert buch.zustand == "offen"
+
+
+async def test_keine_positionszeile_fail_closed_kein_storno(
+    session, session_factory, strategy, portfolio
+):
+    """Fail-closed-Regressionswächter: die Proposal-Pipeline bucht gefüllte Mengen
+    nirgends in ``Position`` (nur der alte Dashboard-Matcher tut das) -- eine fehlende
+    Buchzeile ist „nicht entscheidbar", nicht „geschlossen". Ohne diesen Schutz würde
+    jeder frische Fill dieser Pipeline seinen eigenen Pflicht-Stop im nächsten
+    Durchlauf sofort wieder stornieren."""
+    proposal, engpass = await _gefuellter_vorschlag_mit_stop(session, session_factory, strategy)
+    # Bewusst keine Position-Zeile angelegt.
+
+    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+
+    assert not any(o.gattung == "stornierung" for o in engpass.sende_calls)
+    buch = await session.scalar(
+        select(StopOrderBuch).where(StopOrderBuch.anlass_proposal_id == proposal.id)
+    )
+    await session.refresh(buch)
+    assert buch.zustand == "offen"
