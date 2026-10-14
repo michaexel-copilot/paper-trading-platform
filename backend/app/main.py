@@ -20,6 +20,7 @@ from app.models import BoardNotification, Proposal
 from app.models.proposals import STATE_WARTET_AUF_BOARD
 from app.notify import notify_new_proposal
 from app.schluessel import pruefe_schluesseltrennung_beim_start
+from app.schluesseltrennung_laufend import pruefe_einmal as pruefe_schluesseltrennung_einmal
 from app.startgatter import pruefe_installation_marker, pruefe_matcher_fuer_live_artefakt
 from app.trading.matcher import Matcher, ProcessLock
 from app.trading.proposals import FRISTWAECHTER_INTERVAL_SECONDS, verfalle_ueberfaellige_vorschlaege
@@ -70,6 +71,19 @@ async def _expire_overdue_proposals_loop(session_factory) -> None:
         await asyncio.sleep(FRISTWAECHTER_INTERVAL_SECONDS)
 
 
+async def _pruefe_schluesseltrennung_laufend(session_factory, interval_seconds: int) -> None:
+    """Laufende Prüfung (HED-55, Entwurf Abschnitt 3.2): dieselbe Prüfung wie beim
+    Start, in festem Intervall während des Betriebs. ``pruefe_schluesseltrennung_einmal``
+    setzt bei Fehlschlag selbst das firmenweite Sperrkennzeichen; dieses try/except ist
+    nur gegen einen unerwarteten Fehler im Sweep selbst (analog zu den Schleifen oben)."""
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            await pruefe_schluesseltrennung_einmal(session_factory)
+        except Exception:
+            log.exception("Laufende Schlüsseltrennungs-Prüfung fehlgeschlagen")
+
+
 async def _notify_new_proposals(session_factory, settings: Settings) -> None:
     """Board-Benachrichtigung je Vorschlag, der neu in Z3 steht (HED-43, Entwurf 5.3).
 
@@ -106,7 +120,7 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
             # jeder anderen Startarbeit -- so früh wie technisch möglich abgelehnt
             # (Auflage 2 Startgatter, Auflage 4 Startgatter 4, CRO-Nachforderung HED-42).
             pruefe_matcher_fuer_live_artefakt(settings.run_matcher)
-            pruefe_schluesseltrennung_beim_start()
+            await pruefe_schluesseltrennung_beim_start()
         lock = ProcessLock(settings.lock_file)
         if settings.run_matcher:
             lock.acquire()
@@ -145,6 +159,14 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
             background.append(asyncio.create_task(_check_assets_daily(session_factory, service)))
         if settings.check_proposal_expiry_on_startup:
             background.append(asyncio.create_task(_expire_overdue_proposals_loop(session_factory)))
+        if settings.enforce_startgatter and settings.schluesseltrennung_laufend_pruefen:
+            background.append(
+                asyncio.create_task(
+                    _pruefe_schluesseltrennung_laufend(
+                        session_factory, settings.schluesseltrennung_intervall_sekunden
+                    )
+                )
+            )
         if settings.run_matcher:
             matcher.start()
             background.append(asyncio.create_task(_notify_new_proposals(session_factory, settings)))

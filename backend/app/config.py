@@ -42,6 +42,16 @@ class Settings(BaseSettings):
     # Konfigurations-Default.
     freigegebene_tranche: str = "B1"
 
+    # HED-55 (Entwurf HED-36 Abschnitt 3.2, "Laufende Prüfung, nicht nur beim
+    # Start"): derselbe Selbsttest wie beim Start läuft zusätzlich in festem
+    # Intervall während des Betriebs. Der Entwurf legt keine Zahl fest ("festes
+    # Intervall"); 5 Minuten ist ein Kompromiss zwischen Erkennungsgeschwindigkeit
+    # und Last auf dem Kontostand-Endpunkt (reiner Lesevorgang, kein Handel). Nur
+    # wirksam, wenn enforce_startgatter gesetzt ist -- ohne Betriebsart ist nichts
+    # zu prüfen.
+    schluesseltrennung_laufend_pruefen: bool = True
+    schluesseltrennung_intervall_sekunden: int = 300
+
     # OKX-Demo-Hostname (HED-87, Nachtrag zu B-6/HED-76): der OKX-Demo-Schlüssel des
     # Boards gehört zu einem Konto der OKX-EWR-Einheit und existiert ausschließlich auf
     # eea.okx.com (Fehlercode 50119 "API key doesn't exist" auf www.okx.com/app.okx.com,
