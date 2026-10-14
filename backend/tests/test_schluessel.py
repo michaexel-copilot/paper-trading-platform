@@ -29,18 +29,17 @@ def _credential(**overrides) -> ExchangeCredential:
     return ExchangeCredential(**felder)
 
 
-def _stelle_kontostand_leser(monkeypatch, *, betriebsart: str | None, wirft: bool = False):
+def _stelle_kontostand_leser(monkeypatch, *, erfolgreich: bool):
     """Ersetzt ``schluessel._echter_kontostand_leser`` durch einen Fake ohne
     Netzzugriff -- analog zu ``monkeypatch.setattr(okx_demo, "_client", ...)`` in
-    test_okx_demo.py. ``betriebsart=None`` simuliert einen fehlgeschlagenen
-    Lesevorgang (Timeout/Ablehnung/kein Live-Pfad)."""
+    test_okx_demo.py. ``erfolgreich=False`` simuliert jeden fehlgeschlagenen
+    Lesevorgang (Timeout/Ablehnung/falsches Format/kein Live-Pfad) -- die Gegenstelle
+    selbst entscheidet darüber (siehe ``tests/test_okx_demo_live.py``), nicht ein
+    Feldvergleich auf dieser Seite (vgl. HED-101-Nachforderung in ``app/schluessel.py``,
+    ``verifiziere_kontostand``)."""
 
     async def fake(_credential):
-        if wirft:
-            raise AssertionError("Lesevorgang sollte hier nicht aufgerufen werden")
-        if betriebsart is None:
-            return None
-        return SimpleNamespace(betriebsart=betriebsart)
+        return SimpleNamespace(betriebsart=_credential.betriebsart.value) if erfolgreich else None
 
     monkeypatch.setattr(schluessel, "_echter_kontostand_leser", fake)
 
@@ -129,7 +128,7 @@ async def test_start_selbsttest_mit_nur_eigenem_schluessel_startet(betriebsart, 
     monkeypatch.setenv("OKX_DEMO_API_KEY", "demo-key")
     monkeypatch.setenv("OKX_DEMO_API_SECRET", "demo-secret")
     monkeypatch.delenv("OKX_LIVE_API_KEY", raising=False)
-    _stelle_kontostand_leser(monkeypatch, betriebsart="papier")
+    _stelle_kontostand_leser(monkeypatch, erfolgreich=True)
     await pruefe_schluesseltrennung_beim_start()
 
 
@@ -138,27 +137,13 @@ async def test_start_selbsttest_lehnt_ab_wenn_kontostand_nicht_verifizierbar(
 ):
     """Selbsttest-Punkt 4 (HED-55): ein Schlüssel, der zwar lesbar ist, sich aber
     nicht gegen die Gegenstelle verifizieren lässt (Timeout, Ablehnung, falsches
-    Format), verhindert den Start genauso wie eine Querkontamination."""
+    Format, Umgebungsmismatch -- siehe tests/test_okx_demo_live.py für den echten
+    Ablehnungsfall), verhindert den Start genauso wie eine Querkontamination."""
     betriebsart("papier")
     monkeypatch.setenv("OKX_DEMO_API_KEY", "demo-key")
     monkeypatch.setenv("OKX_DEMO_API_SECRET", "demo-secret")
     monkeypatch.delenv("OKX_LIVE_API_KEY", raising=False)
-    _stelle_kontostand_leser(monkeypatch, betriebsart=None)
-    with pytest.raises(SchluesselFehler):
-        await pruefe_schluesseltrennung_beim_start()
-
-
-async def test_start_selbsttest_lehnt_ab_wenn_ergebnis_falsche_betriebsart_meldet(
-    betriebsart, monkeypatch
-):
-    """Selbsttest-Punkt 4: Lesevorgang gelingt, meldet aber eine Betriebsart, die
-    nicht zum Prozess passt -- muss genauso ablehnen wie ein Lesefehler, nicht nur
-    protokollieren."""
-    betriebsart("papier")
-    monkeypatch.setenv("OKX_DEMO_API_KEY", "demo-key")
-    monkeypatch.setenv("OKX_DEMO_API_SECRET", "demo-secret")
-    monkeypatch.delenv("OKX_LIVE_API_KEY", raising=False)
-    _stelle_kontostand_leser(monkeypatch, betriebsart="live")
+    _stelle_kontostand_leser(monkeypatch, erfolgreich=False)
     with pytest.raises(SchluesselFehler):
         await pruefe_schluesseltrennung_beim_start()
 
@@ -167,19 +152,16 @@ async def test_start_selbsttest_lehnt_ab_wenn_ergebnis_falsche_betriebsart_melde
 
 
 async def test_verifiziere_kontostand_erfolg(monkeypatch):
-    _stelle_kontostand_leser(monkeypatch, betriebsart="papier")
+    _stelle_kontostand_leser(monkeypatch, erfolgreich=True)
     assert await verifiziere_kontostand(_credential()) is True
 
 
-async def test_verifiziere_kontostand_betriebsart_mismatch(monkeypatch):
-    _stelle_kontostand_leser(monkeypatch, betriebsart="live")
-    assert await verifiziere_kontostand(_credential()) is False
-
-
 async def test_verifiziere_kontostand_lesefehler_gilt_als_fehlschlag(monkeypatch):
-    """Kein Unterschied zwischen 'Antwort passt nicht' und 'keine Antwort' -- beides
-    ist fail closed."""
-    _stelle_kontostand_leser(monkeypatch, betriebsart=None)
+    """Jeder fehlgeschlagene Lesevorgang -- gleich ob Timeout, Ablehnung, falsches
+    Format oder Umgebungsmismatch -- ist fail closed. Welchen dieser Fälle OKX für
+    einen echten Umgebungsmismatch tatsächlich meldet, ist Sache von
+    tests/test_okx_demo_live.py, nicht dieses Fakes."""
+    _stelle_kontostand_leser(monkeypatch, erfolgreich=False)
     assert await verifiziere_kontostand(_credential()) is False
 
 
@@ -219,16 +201,16 @@ async def test_selbsttest_bestanden_true_wenn_alles_passt(betriebsart, monkeypat
     monkeypatch.setenv("OKX_DEMO_API_KEY", "demo-key")
     monkeypatch.setenv("OKX_DEMO_API_SECRET", "demo-secret")
     monkeypatch.delenv("OKX_LIVE_API_KEY", raising=False)
-    _stelle_kontostand_leser(monkeypatch, betriebsart="papier")
+    _stelle_kontostand_leser(monkeypatch, erfolgreich=True)
     assert await selbsttest_bestanden() is True
 
 
-async def test_selbsttest_bestanden_false_bei_kontostand_mismatch(betriebsart, monkeypatch):
+async def test_selbsttest_bestanden_false_bei_lesefehler(betriebsart, monkeypatch):
     betriebsart("papier")
     monkeypatch.setenv("OKX_DEMO_API_KEY", "demo-key")
     monkeypatch.setenv("OKX_DEMO_API_SECRET", "demo-secret")
     monkeypatch.delenv("OKX_LIVE_API_KEY", raising=False)
-    _stelle_kontostand_leser(monkeypatch, betriebsart=None)
+    _stelle_kontostand_leser(monkeypatch, erfolgreich=False)
     assert await selbsttest_bestanden() is False
 
 

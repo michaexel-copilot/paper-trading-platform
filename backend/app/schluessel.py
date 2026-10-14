@@ -140,11 +140,23 @@ async def verifiziere_kontostand(credential: ExchangeCredential) -> bool:
     Ergebnis muss zur Betriebsart passen. Ein fehlgeschlagener Lesevorgang zählt
     ebenfalls als nicht bestanden -- fail closed, kein Unterschied zwischen "Antwort
     passt nicht" und "keine Antwort" für den Aufrufer.
+
+    CRO-Nachforderung HED-101 (14.10.2026) zu einer früheren Fassung: ``ergebnis.
+    betriebsart`` wird in ``okx_demo.lese_kontostand`` wörtlich aus
+    ``credential.betriebsart.value`` gesetzt -- ein Vergleich der beiden wäre
+    tautologisch und könnte nie wegen eines Widerspruchs der Gegenstelle fehlschlagen,
+    nur wegen eines technischen Lesefehlers. Die tatsächliche Schutzwirkung kommt von
+    OKX selbst: ein Schlüssel ist an die Umgebung gebunden, in der er angelegt wurde,
+    und ein Lesevorgang mit dem zur Betriebsart passenden Header schlägt mit einem
+    eigenen Fehlercode fehl, wenn Schlüssel und Umgebung nicht zusammenpassen
+    (``AuthenticationError 50101 "APIKey does not match current environment."``,
+    reproduziert gegen eea.okx.com am 2026-10-14, siehe
+    ``tests/test_okx_demo_live.py``). Ein erfolgreicher Lesevorgang ist damit bereits
+    der Beweis, dass Schlüssel und Betriebsart zusammenpassen -- kein zusätzlicher
+    Feldvergleich nötig oder möglich.
     """
     ergebnis = await _echter_kontostand_leser(credential)
-    if ergebnis is None:
-        return False
-    return ergebnis.betriebsart == credential.betriebsart.value
+    return ergebnis is not None
 
 
 async def _pruefe_alle_boersen() -> None:
