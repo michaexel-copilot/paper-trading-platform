@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import current_user
+from app.config import Settings
 from app.db import SessionFactory, get_session
 from app.marketdata.service import MarketService
 from app.models import Asset, Portfolio, User
@@ -14,6 +15,13 @@ def get_market(request: Request) -> MarketService:
 
 def get_session_factory(request: Request) -> SessionFactory:
     return request.app.state.session_factory
+
+
+def get_app_settings(request: Request) -> Settings:
+    """Die laufende Konfiguration dieser Installation (z. B. ``freigegebene_tranche``) --
+    nicht zu verwechseln mit ``app.config.get_settings``, das beim Start aus der
+    Umgebung liest."""
+    return request.app.state.settings
 
 
 def error(status_code: int, code: str, message: str, **extra) -> HTTPException:

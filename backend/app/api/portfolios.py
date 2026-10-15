@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import portfolios as service
-from app.api.deps import error, get_market, get_portfolio
+from app.api.deps import error, get_app_settings, get_market, get_portfolio
 from app.api.schemas import (
     AssetOut,
     FeeProfileOut,
@@ -16,16 +16,20 @@ from app.api.schemas import (
     PortfolioSummary,
     PositionOut,
     QuoteOut,
+    RisikoauszugOut,
     SnapshotOut,
     TrackAssetIn,
     TrackedAssetOut,
 )
 from app.auth import current_user
+from app.config import Settings
 from app.db import get_session
 from app.marketdata.base import DataUnavailable
 from app.marketdata.service import MarketService
 from app.models import FeeProfile, Portfolio, User, ValueSnapshot
+from app.risikolimits import tranchen_grenze
 from app.trading.fees import ZERO
+from app.trading.risikoauszug import erstelle_tagesauszug
 from app.trading.valuation import Valuation, value_portfolio
 
 router = APIRouter(prefix="/api", tags=["portfolios"], dependencies=[Depends(current_user)])
@@ -143,6 +147,29 @@ async def portfolio_detail(
             for asset, quote in zip(tracked, quotes, strict=True)
         ],
     )
+
+
+@router.get("/portfolios/{portfolio_id}/risikoauszug", response_model=RisikoauszugOut)
+async def risikoauszug(
+    portfolio: Portfolio = Depends(get_portfolio),
+    session: AsyncSession = Depends(get_session),
+    market: MarketService = Depends(get_market),
+    settings: Settings = Depends(get_app_settings),
+):
+    """B-11/HED-83: maschinenlesbarer Tages-Risikoauszug für dieses Portfolio --
+    Dashboard Block 5.2, Wöchentlicher Bericht (HED-11), tägliche CRO-Weckung
+    (HED-8 Frage C)."""
+    tranche = settings.freigegebene_tranche
+    tranche_eur = tranchen_grenze(tranche)
+    if tranche_eur is None:
+        raise error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "unbekannte_tranche",
+            f"Freigegebene Tranche {tranche!r} ist in app.risikolimits.TRANCHEN nicht bekannt.",
+        )
+    auszug = await erstelle_tagesauszug(
+        session, market, portfolio, tranche=tranche, tranche_eur=tranche_eur
+    )
+    return RisikoauszugOut.of(auszug)
 
 
 @router.patch("/portfolios/{portfolio_id}", response_model=PortfolioSummary)

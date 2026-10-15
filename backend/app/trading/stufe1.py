@@ -43,9 +43,12 @@ class Stufe1Fehler(ValueError):
     Z2 mit diesem Grund behandelt, siehe :func:`lauf_stufe1`."""
 
 
-async def _letzter_wert_vor(
+async def letzter_wert_vor(
     session: AsyncSession, portfolio_id: int, grenze: datetime
 ) -> Decimal | None:
+    """Wird auch von ``app.trading.risikoauszug`` wiederverwendet (B-11/HED-83) --
+    derselbe Tagesanfangs-/Monatsanfangs-Begriff wie hier in Stufe 1, nicht eine
+    zweite Implementierung."""
     return await session.scalar(
         select(ValueSnapshot.value)
         .where(ValueSnapshot.portfolio_id == portfolio_id, ValueSnapshot.at < grenze)
@@ -54,22 +57,39 @@ async def _letzter_wert_vor(
     )
 
 
-async def _hoechststand(session: AsyncSession, portfolio_id: int) -> Decimal | None:
+async def letzter_snapshot_vor(
+    session: AsyncSession, portfolio_id: int, grenze: datetime
+) -> ValueSnapshot | None:
+    """Wie :func:`letzter_wert_vor`, aber die ganze Zeile -- ``app.trading.risikoauszug``
+    (B-11/HED-83) braucht zusätzlich ``breakdown`` von genau demselben Schnappschuss,
+    nicht nur ``value``, damit Tages-P&L-Gesamtsumme und -Aufteilung zur selben
+    Tagesanfangs-Basis passen."""
+    return await session.scalar(
+        select(ValueSnapshot)
+        .where(ValueSnapshot.portfolio_id == portfolio_id, ValueSnapshot.at < grenze)
+        .order_by(ValueSnapshot.at.desc())
+        .limit(1)
+    )
+
+
+async def hoechststand(session: AsyncSession, portfolio_id: int) -> Decimal | None:
     return await session.scalar(
         select(func.max(ValueSnapshot.value)).where(ValueSnapshot.portfolio_id == portfolio_id)
     )
 
 
-async def _offene_stop_preise(
+async def offene_stop_preise(
     session: AsyncSession, portfolio_id: int, asset_ids: list[int]
 ) -> dict[int, Decimal]:
     """Je Asset die erste offene börsenseitige Stop-Order (type=stop, status=open).
 
     Fehlt eine, trägt das zurückgegebene dict den Asset nicht -- der Aufrufer
-    (``_summenrisiko_offener_positionen``) behandelt das als "diese Position hat
+    (``summenrisiko_offener_positionen``) behandelt das als "diese Position hat
     keinen auslesbaren Stop" und macht das Summenrisiko fail-closed nicht berechenbar
     (HED-8 Tabelle 4.2: "Position ohne börsenseitigen Stop entdeckt" ist selbst ein
     eigener Kill-Switch-Auslöser, B-12 -- hier nur die Konsequenz für Stufe 1).
+    Auch von ``app.trading.risikoauszug`` wiederverwendet (B-11/HED-83, Feld
+    "Positionen ohne Stop").
     """
     if not asset_ids:
         return {}
@@ -87,7 +107,7 @@ async def _offene_stop_preise(
     return ergebnis
 
 
-def _summenrisiko_offener_positionen(
+def summenrisiko_offener_positionen(
     valuation: Valuation, stop_preise: dict[int, Decimal]
 ) -> Decimal | None:
     gesamt = Decimal(0)
@@ -137,12 +157,12 @@ async def sammle_kontext(
     day_start = datetime.combine(now.date(), time.min, tzinfo=UTC)
     month_start = day_start.replace(day=1)
 
-    nav_hoechststand = await _hoechststand(session, portfolio.id)
+    nav_hoechststand = await hoechststand(session, portfolio.id)
     if nav_hoechststand is not None:
         nav_hoechststand = max(nav_hoechststand, nav)
-    nav_tagesanfang = await _letzter_wert_vor(session, portfolio.id, day_start)
-    nav_vor_7_tagen = await _letzter_wert_vor(session, portfolio.id, now - timedelta(days=7))
-    nav_monatsanfang = await _letzter_wert_vor(session, portfolio.id, month_start)
+    nav_tagesanfang = await letzter_wert_vor(session, portfolio.id, day_start)
+    nav_vor_7_tagen = await letzter_wert_vor(session, portfolio.id, now - timedelta(days=7))
+    nav_monatsanfang = await letzter_wert_vor(session, portfolio.id, month_start)
 
     asset = await session.get(Asset, eingabe.instrument_asset_id)
     if asset is None:
@@ -179,8 +199,8 @@ async def sammle_kontext(
         anzahl_offener_positionen += 1
 
     asset_ids = [p.asset.id for p in valuation.positions if p.quantity != 0]
-    stop_preise = await _offene_stop_preise(session, portfolio.id, asset_ids)
-    summenrisiko_vor_trade = _summenrisiko_offener_positionen(valuation, stop_preise)
+    stop_preise = await offene_stop_preise(session, portfolio.id, asset_ids)
+    summenrisiko_vor_trade = summenrisiko_offener_positionen(valuation, stop_preise)
     summenrisiko_nach_trade = (
         summenrisiko_vor_trade + risiko_je_trade_eur
         if summenrisiko_vor_trade is not None and risiko_je_trade_eur is not None
@@ -245,6 +265,7 @@ async def sammle_kontext(
         proposal_size=eingabe.size,
         nachkauf_in_verlust_pruefbar=nachkauf_in_verlust_pruefbar,
         position_unrealized_vor_trade_eur=position_unrealized_vor_trade_eur,
+        cash_ausserhalb_boerse=portfolio.external_reserve_cash,
     )
 
 

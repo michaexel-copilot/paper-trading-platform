@@ -408,3 +408,43 @@ class TradeOut(Out):
     fee_rate_fallback: bool
     cash_change: Dec
     realized_pnl: Dec
+
+
+# --- Tages-Risikoauszug (B-11/HED-83) -----------------------------------------------
+
+
+class RisikoauszugOut(BaseModel):
+    generated_at: datetime
+    portfolio_id: int
+
+    nav: Dec
+    drawdown: Dec | None
+    drawdown_pct: Dec | None
+
+    tages_pnl_gesamt: Dec | None
+    tages_pnl_handelsergebnis: Dec | None
+    tages_pnl_waehrungseffekt: Dec | None
+    tages_pnl_berechenbar: bool
+    tages_pnl_grund: str | None
+
+    brutto_exposure: Dec
+    summenrisiko: Dec | None
+
+    cash_boerse: Dec
+    cash_ausserhalb_boerse: Dec
+    cash_gesamt: Dec
+    barquote_pct: Dec
+
+    anteil_je_quote_waehrung_pct: dict[str, Dec]
+    usd_anteil_pct: Dec
+    usdt_anteil_pct: Dec
+    usdc_anteil_pct: Dec
+
+    anzahl_offener_positionen: int
+    positionen_ohne_stop: list[str]
+
+    limits: list[dict]
+
+    @classmethod
+    def of(cls, auszug) -> "RisikoauszugOut":
+        return cls(**auszug.to_json())
