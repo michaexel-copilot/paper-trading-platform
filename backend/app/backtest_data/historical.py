@@ -47,6 +47,13 @@ PAGE_LIMIT = 300  # OKX's max candles per request (ccxt okx.py: maxLimit = 300)
 MAX_ITERATIONS = 4000  # hard stop regardless of progress -- see module docstring
 MAX_EMPTY_WINDOWS = 4000  # ~ "walk forward 4000 pages before giving up on a symbol"
 
+# HED-10 Beschluss 1 / HED-130: Hedgeclip's own OKX rate limit is 300 calls per
+# minute, stricter than ccxt's okx default of ~545/min (110 ms). enableRateLimit
+# alone only enforces ccxt's default, so the exchange's own rateLimit (ms
+# between calls) must be set explicitly, or a cold-start discovery run across
+# several symbols/1h bars can exceed the catalog's own limit.
+OKX_RATE_LIMIT_MS = 200  # 60_000 / 200 = 300 calls/minute
+
 # Default symbols for *technical* validation of this pipeline only -- not the
 # Family A strategy universe (that is the Quant Researcher's decision; see
 # design note HED-119 for the measured history-depth finding that bears on
@@ -259,7 +266,9 @@ async def refresh(
         raise ValueError(f"unsupported timeframe {timeframe!r}, expected one of {TIMEFRAMES}")
     now = now or datetime.now(UTC)
     owns_exchange = exchange is None
-    exchange = exchange or getattr(ccxt_async, exchange_id)({"enableRateLimit": True})
+    exchange = exchange or getattr(ccxt_async, exchange_id)(
+        {"enableRateLimit": True, "rateLimit": OKX_RATE_LIMIT_MS}
+    )
     try:
         await _validate_symbol(exchange, symbol)
         cached = cache.read(exchange_id, symbol, timeframe)

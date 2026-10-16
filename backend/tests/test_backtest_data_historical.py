@@ -10,8 +10,10 @@ from decimal import Decimal
 
 import pytest
 
+import app.backtest_data.historical as historical
 from app.backtest_data.historical import (
     EARLIEST_SINCE,
+    OKX_RATE_LIMIT_MS,
     Gap,
     HistoryCache,
     find_gaps,
@@ -227,6 +229,36 @@ async def test_refresh_reports_a_gap_that_appears_after_cached_history(tmp_path)
 
     assert result.bar_count == 3
     assert result.gaps == [Gap(after=later[1].time, before=later[2].time, missing_bars=4)]
+
+
+# --- HED-130: own OKX rate limit (300/min), not ccxt's default (~545/min) ---------
+
+
+def test_okx_rate_limit_is_300_per_minute_not_ccxts_default():
+    """HED-10 Beschluss 1: Hedgeclip's own OKX limit is 300 calls/minute."""
+    assert 60_000 / OKX_RATE_LIMIT_MS == 300
+
+
+async def test_refresh_configures_ccxt_with_the_own_rate_limit_when_it_builds_the_exchange(
+    monkeypatch, tmp_path
+):
+    """refresh() only enforces the limit when it builds its own exchange (the
+    production path, used by refresh_backtest_history.py) -- a caller-supplied
+    exchange (as in every other test here) is a fixture, not a rate limit to set.
+    """
+    captured: list[dict] = []
+
+    class RecordingOkx(FakeExchange):
+        def __init__(self, config):
+            captured.append(config)
+            super().__init__(SPOT_MARKETS, rows=[])
+
+    monkeypatch.setattr(historical.ccxt_async, "okx", RecordingOkx)
+    cache = HistoryCache(tmp_path)
+
+    await refresh(cache, "BTC/USDC", "1d")
+
+    assert captured == [{"enableRateLimit": True, "rateLimit": OKX_RATE_LIMIT_MS}]
 
 
 # --- live: the real OKX public endpoint, no key -----------------------------------
