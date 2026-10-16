@@ -11,6 +11,13 @@ börsenseitigen Stop, wird das firmenweite Sperrkennzeichen gesetzt
 (``pflicht_stop_nicht_platziert``). Das ist der eigentliche V2-Wächter für das
 Zeitfenster aus Entwurf Abschnitt 1.3 -- er beseitigt das Fenster nicht, hält es aber
 nicht unbegrenzt offen.
+
+Fill-Buchung (HED-109, Entwurf Abschnitt 4): jeder Zuwachs der gefüllten Menge wird in
+``Position``/``Portfolio`` gebucht (``_buche_einstiegsfill``, dieselbe Logik wie der
+alte Dashboard-Matcher in ``engine.try_fill`` über ``app.trading.fill_buchung``), bevor
+der Zustand fortgeschrieben wird. Nur die Einstiegsseite (F-4: ausschließlich
+``side == "buy"`` kommt über diese Pipeline vor) -- die Exit-Seite (Stop-Fills,
+``auto_exit``-Fills) ist ein eigener, noch offener Nebenbefund.
 """
 
 import logging
@@ -22,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dbtypes import utcnow
 from app.kill_switch import setze_firmenweit
+from app.marketdata.service import MarketService
 from app.models.proposals import (
     STATE_GEFUELLT,
     STATE_TEILGEFUELLT_BEENDET,
@@ -43,6 +51,7 @@ _PFLICHT_STOP_AUSLOESER = "pflicht_stop_nicht_platziert"
 async def pruefe_fills_einmal(
     session_factory,
     engpass: Versandengpass,
+    market: MarketService,
     *,
     exchange: str = "okx",
     pflicht_stop_nachfrist: timedelta,
@@ -70,7 +79,7 @@ async def pruefe_fills_einmal(
                 if proposal is None:
                     continue
                 await _bearbeite_proposal(
-                    session, proposal, exchange, engpass, pflicht_stop_nachfrist
+                    session, proposal, exchange, engpass, market, pflicht_stop_nachfrist
                 )
                 bearbeitet += 1
         except Exception:
@@ -110,6 +119,7 @@ async def _bearbeite_proposal(
     proposal: Proposal,
     exchange: str,
     engpass: Versandengpass,
+    market: MarketService,
     pflicht_stop_nachfrist: timedelta,
 ) -> None:
     if proposal.gegenstellen_order_id is None:
@@ -160,6 +170,17 @@ async def _bearbeite_proposal(
         return
 
     if neue_menge > bisherige_menge:
+        gebucht = await _buche_einstiegsfill(
+            session, market, proposal, neue_menge - bisherige_menge
+        )
+        if not gebucht:
+            # HED-109 Entwurf Abschnitt 4.2: kein stiller Teilerfolg -- Portfolio oder
+            # Asset nicht auflösbar heißt NICHT gebucht, NICHT fortgeschaltet, kein
+            # Stop. Fehler ist bereits in `_buche_einstiegsfill` protokolliert; der
+            # nächste Durchlauf versucht es erneut (gleiches Muster wie beim nicht
+            # lesbaren Status oben).
+            await session.commit()
+            return
         if proposal.filled_at is None:
             # Zeitpunkt der ERSTEN Füllung, nicht des Erkennens eines Endzustands --
             # das ist die Uhr, gegen die F-11 die Pflicht-Stop-Nachfrist misst (eine
@@ -293,6 +314,72 @@ async def _stelle_stop_sicher(
                 proposal.id,
                 storno_ergebnis.ablehnungsgrund,
             )
+
+
+async def _buche_einstiegsfill(
+    session: AsyncSession, market: MarketService, proposal: Proposal, delta_menge: Decimal
+) -> bool:
+    """HED-109 (Entwurf Abschnitt 4.2/4.3/4.4): bucht den Zuwachs einer
+    Einstiegs-Füllung in Position/Cash/Gebühren -- dieselbe Logik, die der alte
+    Dashboard-Matcher für Orders benutzt (``app.trading.fill_buchung.buche_fill``), hier
+    zum ersten Mal auch für die Proposal-Pipeline.
+
+    Nur Käufe: F-4 (``versand_treiber._treibe_proposal``) sendet über diese Pipeline
+    ausschließlich ``side == "buy"``/``direction == "long"`` -- die Exit-Seite ist ein
+    eigener, hier ausdrücklich nicht behandelter Nebenbefund (Entwurf Abschnitt 3).
+
+    Preisquelle ist ``proposal.limit_price``, nicht ein Börsenkurs (Entwurf Abschnitt
+    4.3, gleiche Linie wie der B-12-Stop-Kurs) -- ein Limit-Buy füllt nie teurer als
+    sein Limit, die Buchung kann die Kosten also nur über-, nie unterschätzen.
+    Liquiditätsannahme fest "taker" (Entwurf Abschnitt 4.4): OKX-Demo liefert kein
+    maker/taker-Flag, "taker" ist die höhere, damit konservative Gebühr.
+
+    Fail closed, drei Stufen (Strategie ohne Portfolio, Instrument nicht im Katalog,
+    Portfolio-Zeile fehlt): gibt False zurück und bucht nichts. Der Aufrufer darf dann
+    weder den Zustand noch ``gefuellte_menge`` fortschreiben (kein stiller
+    Teilerfolg) -- derselbe Fail-closed-Grundsatz wie in ``_position_noch_offen``.
+    """
+    from app.models import Asset, Portfolio, Strategy
+    from app.trading.engine import amounts
+    from app.trading.fill_buchung import buche_fill
+    from app.trading.orders import pricing_for
+
+    strategy = await session.get(Strategy, proposal.strategy_id)
+    if strategy is None or strategy.portfolio_id is None:
+        log.error(
+            "Fill-Buchung: Vorschlag %s ohne aufgelöstes Portfolio -- nicht gebucht, "
+            "Zustand bleibt unverändert (HED-109).",
+            proposal.id,
+        )
+        return False
+    asset = await session.scalar(select(Asset).where(Asset.symbol == proposal.instrument))
+    if asset is None:
+        log.error(
+            "Fill-Buchung: Instrument %s von Vorschlag %s nicht im Katalog -- nicht "
+            "gebucht, Zustand bleibt unverändert (HED-109).",
+            proposal.instrument,
+            proposal.id,
+        )
+        return False
+    portfolio = await session.scalar(
+        select(Portfolio).where(Portfolio.id == strategy.portfolio_id).with_for_update()
+    )
+    if portfolio is None:
+        log.error(
+            "Fill-Buchung: Portfolio %s von Vorschlag %s existiert nicht -- nicht "
+            "gebucht, Zustand bleibt unverändert (HED-109).",
+            strategy.portfolio_id,
+            proposal.id,
+        )
+        return False
+
+    pricing = await pricing_for(session, market, portfolio, asset, view=None)
+    result = amounts("buy", proposal.limit_price, delta_menge, "taker", pricing)
+    await buche_fill(
+        session, portfolio, asset.id, "buy", proposal.limit_price, delta_menge,
+        pricing.fx_rate, result,
+    )
+    return True
 
 
 async def _pruefe_eskalation(

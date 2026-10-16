@@ -135,13 +135,13 @@ def _status(status: str, gefuellt, rest=Decimal(0)) -> OrderStatusErgebnis:
 
 
 async def test_vollstaendig_gefuellt_setzt_z11_und_platziert_stop(
-    session, session_factory, strategy
+    session, session_factory, market, prices, strategy, portfolio
 ):
     proposal = await _versandter_vorschlag(session, strategy)
     engpass = _FakeEngpass()
     engpass.plane_status(proposal.gegenstellen_order_id, _status("gefuellt", "0.5"))
 
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
 
     await session.refresh(proposal)
     assert proposal.state == STATE_GEFUELLT
@@ -159,15 +159,28 @@ async def test_vollstaendig_gefuellt_setzt_z11_und_platziert_stop(
     assert buch.zustand == "offen"
     assert buch.menge_soll == D("0.5")
 
+    # HED-109: Fill-Buchung läuft vor der Stop-Platzierung -- Position/Cash müssen nach
+    # diesem Durchlauf stimmen, nicht nur der Proposal-Zustand.
+    btc_id = await asset_id(session, "BTC")
+    position = await session.scalar(
+        select(Position).where(Position.portfolio_id == portfolio.id, Position.asset_id == btc_id)
+    )
+    assert position is not None
+    assert position.quantity == D("0.5")
+    await session.refresh(portfolio)
+    assert portfolio.cash < D("10000")  # Kauf hat Cash gekostet
+    assert portfolio.fees_paid > D("0")
+    assert portfolio.realized_pnl == D("0")  # nur Käufe über diese Pipeline (F-4)
+
 
 async def test_teilgefuellt_und_von_gegenstelle_beendet_setzt_z12(
-    session, session_factory, strategy
+    session, session_factory, market, prices, strategy
 ):
     proposal = await _versandter_vorschlag(session, strategy)
     engpass = _FakeEngpass()
     engpass.plane_status(proposal.gegenstellen_order_id, _status("beendet", "0.2"))
 
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
 
     await session.refresh(proposal)
     assert proposal.state == STATE_TEILGEFUELLT_BEENDET
@@ -176,35 +189,37 @@ async def test_teilgefuellt_und_von_gegenstelle_beendet_setzt_z12(
     assert stop_order.quantity == D("0.2")
 
 
-async def test_abgelehnt_setzt_z13_ohne_stop(session, session_factory, strategy):
+async def test_abgelehnt_setzt_z13_ohne_stop(session, session_factory, market, strategy):
     proposal = await _versandter_vorschlag(session, strategy)
     engpass = _FakeEngpass()
     engpass.plane_status(proposal.gegenstellen_order_id, _status("abgelehnt", "0"))
 
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
 
     await session.refresh(proposal)
     assert proposal.state == STATE_VON_GEGENSTELLE_ABGELEHNT
     assert not engpass.sende_calls
 
 
-async def test_beendet_ohne_fuellung_zaehlt_wie_abgelehnt(session, session_factory, strategy):
+async def test_beendet_ohne_fuellung_zaehlt_wie_abgelehnt(
+    session, session_factory, market, strategy
+):
     proposal = await _versandter_vorschlag(session, strategy)
     engpass = _FakeEngpass()
     engpass.plane_status(proposal.gegenstellen_order_id, _status("beendet", "0"))
 
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
 
     await session.refresh(proposal)
     assert proposal.state == STATE_VON_GEGENSTELLE_ABGELEHNT
 
 
-async def test_offen_bleibt_z10_ohne_stop(session, session_factory, strategy):
+async def test_offen_bleibt_z10_ohne_stop(session, session_factory, market, strategy):
     proposal = await _versandter_vorschlag(session, strategy)
     engpass = _FakeEngpass()
     engpass.plane_status(proposal.gegenstellen_order_id, _status("offen", "0"))
 
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
 
     await session.refresh(proposal)
     assert proposal.state == STATE_VERSANDT
@@ -212,13 +227,13 @@ async def test_offen_bleibt_z10_ohne_stop(session, session_factory, strategy):
 
 
 async def test_teilgefuellt_noch_aktiv_bleibt_z10_mit_stop_fuer_teilmenge(
-    session, session_factory, strategy
+    session, session_factory, market, prices, strategy
 ):
     proposal = await _versandter_vorschlag(session, strategy)
     engpass = _FakeEngpass()
     engpass.plane_status(proposal.gegenstellen_order_id, _status("teilgefuellt", "0.3", "0.2"))
 
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
 
     await session.refresh(proposal)
     assert proposal.state == STATE_VERSANDT  # bleibt Z10
@@ -228,13 +243,13 @@ async def test_teilgefuellt_noch_aktiv_bleibt_z10_mit_stop_fuer_teilmenge(
 
 
 async def test_nicht_lesbar_bleibt_z10_kein_stiller_zwischenzustand(
-    session, session_factory, strategy
+    session, session_factory, market, strategy
 ):
     proposal = await _versandter_vorschlag(session, strategy)
     engpass = _FakeEngpass()
     # Keine geplante Antwort -> lese_order_status liefert None.
 
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
 
     await session.refresh(proposal)
     assert proposal.state == STATE_VERSANDT
@@ -245,19 +260,19 @@ async def test_nicht_lesbar_bleibt_z10_kein_stiller_zwischenzustand(
 
 
 async def test_nachfuehrung_platziert_neuen_stop_vor_stornierung_des_alten(
-    session, session_factory, strategy
+    session, session_factory, market, prices, strategy
 ):
     proposal = await _versandter_vorschlag(session, strategy)
     engpass = _FakeEngpass()
     engpass.plane_status(proposal.gegenstellen_order_id, _status("teilgefuellt", "0.3", "0.2"))
 
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
     erster_stop = next(o for o in engpass.sende_calls if o.gattung == "stop_platzierung")
     assert erster_stop.quantity == D("0.3")
 
     # Zweiter Durchlauf: Rest füllt, Gesamtmenge jetzt 0.5.
     engpass.plane_status(proposal.gegenstellen_order_id, _status("gefuellt", "0.5"))
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
 
     gattungen = [o.gattung for o in engpass.sende_calls]
     # Reihenfolge ist die Entscheidung (F-13): neuer Stop zuerst, dann Stornierung.
@@ -278,6 +293,57 @@ async def test_nachfuehrung_platziert_neuen_stop_vor_stornierung_des_alten(
     assert alter.ersetzt_durch_id == neuer.id
     assert neuer.zustand == "offen"
     assert neuer.menge_soll == D("0.5")
+
+
+# --- HED-109: Fill-Buchung Position/Cash (Entwurf Abschnitt 4, CRO-Abnahme HED-145) -
+
+
+async def test_fill_buchung_mittelt_avg_cost_ueber_zwei_vorschlaege(
+    session, session_factory, market, prices, strategy, portfolio
+):
+    """Zwei getrennte Vorschläge zu unterschiedlichen Preisen auf demselben
+    Instrument/Portfolio -- die zweite Buchung muss ``avg_cost`` über beide Fills
+    mitteln, nicht überschreiben (Testplan Entwurf Abschnitt 6, zweiter Punkt)."""
+    erster = await _versandter_vorschlag(session, strategy, gegenstellen_order_id="okx-order-a")
+    engpass = _FakeEngpass()
+    engpass.plane_status(erster.gegenstellen_order_id, _status("gefuellt", "0.5"))
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
+
+    zweiter = await _versandter_vorschlag(session, strategy, gegenstellen_order_id="okx-order-b")
+    zweiter.limit_price = D(60000)
+    await session.commit()
+    engpass.plane_status(zweiter.gegenstellen_order_id, _status("gefuellt", "0.3"))
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
+
+    btc_id = await asset_id(session, "BTC")
+    position = await session.scalar(
+        select(Position).where(Position.portfolio_id == portfolio.id, Position.asset_id == btc_id)
+    )
+    # Erster Fill: 0.5 @ 50000 USDC * 0,8 EUR/USD = 40000 EUR Kostenbasis.
+    # Zweiter Fill: 0.3 @ 60000 USDC * 0,8 EUR/USD = 14400 EUR, gewichtet gemittelt:
+    # (0,5*40000 + 14400) / 0,8 = 43000.
+    assert position.quantity == D("0.8")
+    assert position.avg_cost == D("43000.00")
+
+
+async def test_fail_closed_ohne_portfolio_keine_buchung_kein_fortschritt(
+    session, session_factory, market, strategy
+):
+    """Testplan Entwurf Abschnitt 6, Fail-closed-Fall: ``Strategy.portfolio_id`` fehlt
+    -> keine Buchung, Proposal-Zustand unverändert, kein Stop (HED-109 Entwurf
+    Abschnitt 4.2) -- derselbe Fail-closed-Grundsatz wie in ``_position_noch_offen``."""
+    proposal = await _versandter_vorschlag(session, strategy)
+    strategy.portfolio_id = None
+    await session.commit()
+    engpass = _FakeEngpass()
+    engpass.plane_status(proposal.gegenstellen_order_id, _status("gefuellt", "0.5"))
+
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
+
+    await session.refresh(proposal)
+    assert proposal.state == STATE_VERSANDT  # unverändert, kein stiller Teilerfolg
+    assert proposal.gefuellte_menge is None
+    assert not engpass.sende_calls  # kein Stop ohne Buchung
 
 
 # --- P-9: Pflicht-Stop-Nachfrist -> Kill-Switch Stufe 2 -----------------------------
@@ -342,32 +408,44 @@ async def test_mit_offenem_stop_keine_eskalation_trotz_abgelaufener_nachfrist(
 
 
 async def _gefuellter_vorschlag_mit_stop(
-    session, session_factory, strategy, *, direction="long"
+    session, session_factory, market, strategy, *, direction="long"
 ) -> tuple:
     """Bringt einen Vorschlag bis Z11 (vollständig gefüllt, Stop offen) -- gemeinsamer
-    Aufsatzpunkt für die drei E-12-Fälle."""
+    Aufsatzpunkt für die drei E-12-Fälle. Seit HED-109 bucht dieser Durchlauf den Fill
+    bereits selbst in ``Position`` -- die Zeile existiert danach immer."""
     proposal = await _versandter_vorschlag(session, strategy, direction=direction)
     engpass = _FakeEngpass()
     engpass.plane_status(proposal.gegenstellen_order_id, _status("gefuellt", "0.5"))
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
     await session.refresh(proposal)
     assert proposal.state == STATE_GEFUELLT
     engpass.sende_calls.clear()  # nur die zweite Durchführung (E-12) ist der Testgegenstand
     return proposal, engpass
 
 
-async def test_position_geschlossen_storniert_stop(session, session_factory, strategy, portfolio):
+async def test_position_geschlossen_storniert_stop(
+    session, session_factory, market, prices, strategy, portfolio
+):
     """Auto-Exit hat die Position vollständig geschlossen (Position.quantity == 0) --
     der verwaiste Stop wird automatisch storniert, nicht erst vom nächsten täglichen
-    Abgleich als Waise gemeldet (sonst unechter Stufe-2-Alarm, R-5)."""
-    proposal, engpass = await _gefuellter_vorschlag_mit_stop(session, session_factory, strategy)
-    btc_id = await asset_id(session, "BTC")
-    session.add(
-        Position(portfolio_id=portfolio.id, asset_id=btc_id, quantity=D("0"), avg_cost=D("0"))
+    Abgleich als Waise gemeldet (sonst unechter Stufe-2-Alarm, R-5).
+
+    Die Exit-Buchung selbst ist ein eigener, noch offener Nebenbefund (HED-109 Entwurf
+    Abschnitt 3) -- hier wird das Ergebnis einer Schließung (Menge 0) direkt auf der
+    von der Einstiegsbuchung bereits angelegten Zeile simuliert, nicht über eine zweite
+    Zeile (Unique Constraint portfolio_id/asset_id erlaubt nur eine)."""
+    proposal, engpass = await _gefuellter_vorschlag_mit_stop(
+        session, session_factory, market, strategy
     )
+    btc_id = await asset_id(session, "BTC")
+    position = await session.scalar(
+        select(Position).where(Position.portfolio_id == portfolio.id, Position.asset_id == btc_id)
+    )
+    assert position is not None  # von der Einstiegsbuchung (HED-109) angelegt
+    position.quantity = D("0")
     await session.commit()
 
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
 
     storno_calls = [o for o in engpass.sende_calls if o.gattung == "stornierung"]
     assert len(storno_calls) == 1
@@ -381,17 +459,23 @@ async def test_position_geschlossen_storniert_stop(session, session_factory, str
     assert buch.beendet_at is not None
 
 
-async def test_position_noch_offen_kein_storno(session, session_factory, strategy, portfolio):
+async def test_position_noch_offen_kein_storno(
+    session, session_factory, market, prices, strategy, portfolio
+):
     """Position besteht unverändert fort (Auto-Exit hat nichts geschlossen) -- der
-    Stop bleibt offen."""
-    proposal, engpass = await _gefuellter_vorschlag_mit_stop(session, session_factory, strategy)
-    btc_id = await asset_id(session, "BTC")
-    session.add(
-        Position(portfolio_id=portfolio.id, asset_id=btc_id, quantity=D("0.5"), avg_cost=D("50000"))
+    Stop bleibt offen. Seit HED-109 legt bereits die Einstiegsbuchung die Zeile mit
+    Menge 0.5 an, kein manuelles Anlegen mehr nötig."""
+    proposal, engpass = await _gefuellter_vorschlag_mit_stop(
+        session, session_factory, market, strategy
     )
-    await session.commit()
+    btc_id = await asset_id(session, "BTC")
+    position = await session.scalar(
+        select(Position).where(Position.portfolio_id == portfolio.id, Position.asset_id == btc_id)
+    )
+    assert position is not None
+    assert position.quantity == D("0.5")
 
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
 
     assert not any(o.gattung == "stornierung" for o in engpass.sende_calls)
     buch = await session.scalar(
@@ -402,17 +486,32 @@ async def test_position_noch_offen_kein_storno(session, session_factory, strateg
 
 
 async def test_keine_positionszeile_fail_closed_kein_storno(
-    session, session_factory, strategy, portfolio
+    session, session_factory, market, strategy, portfolio
 ):
-    """Fail-closed-Regressionswächter: die Proposal-Pipeline bucht gefüllte Mengen
-    nirgends in ``Position`` (nur der alte Dashboard-Matcher tut das) -- eine fehlende
-    Buchzeile ist „nicht entscheidbar", nicht „geschlossen". Ohne diesen Schutz würde
-    jeder frische Fill dieser Pipeline seinen eigenen Pflicht-Stop im nächsten
-    Durchlauf sofort wieder stornieren."""
-    proposal, engpass = await _gefuellter_vorschlag_mit_stop(session, session_factory, strategy)
+    """Fail-closed-Regressionswächter: eine fehlende Buchzeile ist „nicht
+    entscheidbar", nicht „geschlossen" (``_position_noch_offen``). Seit HED-109 bucht
+    eine frische Einstiegsfüllung über diese Pipeline die Zeile selbst -- der Fall
+    "keine Zeile vorhanden" ist also nicht mehr über den normalen Fill-Pfad erreichbar
+    und wird hier direkt konstruiert (z. B. eine Datenkorrektur könnte die Zeile
+    entfernen, ohne den Stop abzuräumen). Zustand wird dafür direkt gesetzt, ohne über
+    `pruefe_fills_einmal` zu laufen -- so ist `market`/Preiskonvertierung für diesen
+    Teil nicht nötig."""
+    proposal = await _versandter_vorschlag(session, strategy)
+    proposal.state = STATE_GEFUELLT
+    proposal.gefuellte_menge = D("0.5")
+    proposal.filled_at = utcnow()
+    session.add(
+        StopOrderBuch(
+            strategie_schluessel=str(strategy.id), exchange="okx", symbol="BTC/USDC",
+            side="sell", menge_soll=D("0.5"), trigger_soll=D(47500),
+            gegenstellen_algo_id="algo-1", anlass_proposal_id=proposal.id, zustand="offen",
+        )
+    )
+    await session.commit()
+    engpass = _FakeEngpass()
     # Bewusst keine Position-Zeile angelegt.
 
-    await pruefe_fills_einmal(session_factory, engpass, pflicht_stop_nachfrist=NACHFRIST)
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
 
     assert not any(o.gattung == "stornierung" for o in engpass.sende_calls)
     buch = await session.scalar(
