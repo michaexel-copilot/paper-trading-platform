@@ -11,7 +11,12 @@ import pytest
 from app.marketdata.base import DataUnavailable, MarketDataSource, NotListed, SourceError
 from app.marketdata.cache import TTLCache, quote_ttl
 from app.marketdata.calendars import market_status
-from app.marketdata.ccxt_adapter import OHLCV_EMPTY_WINDOW_STRIDE_BARS, CcxtSource
+from app.marketdata.ccxt_adapter import (
+    OHLCV_EMPTY_WINDOW_STRIDE_BARS,
+    OHLCV_MAX_EMPTY_WINDOWS,
+    OHLCV_PAGE_LIMIT,
+    CcxtSource,
+)
 from app.marketdata.router import AssetRef, SourceRouter
 from app.marketdata.service import classify
 from app.marketdata.yahoo_adapter import YahooSource
@@ -189,6 +194,39 @@ async def test_ccxt_history_gives_up_once_the_empty_window_reaches_now():
 
     assert bars == []
     assert exchange.calls.count("fetch_ohlcv") < 100
+
+
+async def test_ccxt_history_empty_window_probes_do_not_shrink_the_page_budget():
+    """HED-139: OHLCV_PAGE_LIMIT (real data pages) and OHLCV_MAX_EMPTY_WINDOWS
+    (listing-date probes) must be independent budgets. A symbol that needed
+    several probes to find its first candle must still get the *full*
+    OHLCV_PAGE_LIMIT pages of real data afterwards -- a shared counter would
+    truncate history by however many probes happened first.
+    """
+    num_empty_probes = OHLCV_MAX_EMPTY_WINDOWS // 2
+
+    class ProbesThenFullPageBudget(RecordedExchange):
+        def __init__(self):
+            super().__init__()
+            self.empty_served = 0
+            self.pages_served = 0
+
+        async def fetch_ohlcv(self, symbol, timeframe, since, limit):
+            self.calls.append("fetch_ohlcv")
+            if self.empty_served < num_empty_probes:
+                self.empty_served += 1
+                return []
+            if self.pages_served >= OHLCV_PAGE_LIMIT:
+                return []
+            self.pages_served += 1
+            return [[since, 1, 1, 1, 1, 1]]
+
+    exchange = ProbesThenFullPageBudget()
+    source = CcxtSource("okx", exchange)
+
+    bars = await source.fetch_ohlcv("BTC/USDT", "1h", datetime(2015, 1, 1, tzinfo=UTC))
+
+    assert len(bars) == OHLCV_PAGE_LIMIT
 
 
 async def test_ccxt_search_matches_the_base_currency():

@@ -15,6 +15,9 @@ MARKETS_TTL_SECONDS = 24 * 3600
 # Kept, not removed, as a last resort for non-OKX sources in the chain that may
 # list a coin only against USDT.
 SEARCH_QUOTES = ("USDC", "USD", "EUR", "USDT")
+# Cap on pages that actually returned data, counted separately from
+# OHLCV_MAX_EMPTY_WINDOWS below (HED-139) -- a listing-date probe sequence
+# must never eat into the budget for paging through real history.
 OHLCV_PAGE_LIMIT = 40
 TIMEFRAME_STEP = {"1d": timedelta(days=1), "1h": timedelta(hours=1)}
 # Bars worth of time to skip when a page comes back empty (HED-123): a
@@ -23,10 +26,10 @@ TIMEFRAME_STEP = {"1d": timedelta(days=1), "1h": timedelta(hours=1)}
 # exchange's real page size -- it only has to be large enough to make
 # progress, never so large that it steps past genuine data.
 OHLCV_EMPTY_WINDOW_STRIDE_BARS = 300
-# Safety bound on empty-window probes, independent of OHLCV_PAGE_LIMIT (which
-# only counts pages that actually returned data). Keeps a single request a
-# user is waiting on from turning into an unbounded number of round trips if
-# an exchange keeps answering empty for some other reason.
+# Safety bound on empty-window probes, independent of OHLCV_PAGE_LIMIT (see
+# above). Keeps a single request a user is waiting on from turning into an
+# unbounded number of round trips if an exchange keeps answering empty for
+# some other reason.
 OHLCV_MAX_EMPTY_WINDOWS = 20
 
 
@@ -129,8 +132,12 @@ class CcxtSource:
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         rows: dict[int, list] = {}
         empty_windows = 0
+        pages_with_data = 0
         # Exchanges cap the bars per request, so page forward until caught up.
-        for _ in range(OHLCV_PAGE_LIMIT):
+        # pages_with_data and empty_windows are bounded independently (HED-139)
+        # -- a run of listing-date probes must not shrink the budget left for
+        # paging through the real history that follows.
+        while pages_with_data < OHLCV_PAGE_LIMIT and empty_windows <= OHLCV_MAX_EMPTY_WINDOWS:
             page = await self._call("fetch_ohlcv", symbol, timeframe, cursor, None)
             new = [row for row in page if row[0] not in rows and row[0] >= cursor]
             if not new:
@@ -144,10 +151,11 @@ class CcxtSource:
                 # OHLCV_MAX_EMPTY_WINDOWS and by the wall clock so this
                 # cannot turn into an unbounded number of round trips.
                 empty_windows += 1
-                if empty_windows > OHLCV_MAX_EMPTY_WINDOWS or cursor >= now_ms:
+                if cursor >= now_ms:
                     break
                 cursor += step_ms * OHLCV_EMPTY_WINDOW_STRIDE_BARS
                 continue
+            pages_with_data += 1
             empty_windows = 0
             for row in new:
                 rows[row[0]] = row
