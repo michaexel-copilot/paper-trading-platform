@@ -22,6 +22,17 @@ setzt. Reicht die übergebene Zeitreihe nicht für die gewünschten Fenster, wir
 Fehler gemeldet (``InsufficientHistory``), nicht stillschweigend mit weniger oder
 kürzeren Fenstern aufgefüllt -- fail closed, genau wie B-2 es für den Orderpfad
 verlangt, nur hier auf der Validierungsmethodik angewendet.
+
+Board-Entscheidung zu HED-125 (16.10.2026, "Hybrid", Kommentar auf HED-121): die
+rollierenden Fenster oben laufen auf einer langen Proxy-Historie (z. B. USDT); die
+echten Monate des tatsächlich handelbaren Universums (z. B. USDC) bilden danach EIN
+einziges, festes Out-of-Sample-Fenster -- kein weiteres Rollieren darüber, das ist die
+Abnahme-Strecke. Dafür ``run_final_holdout`` unten: eine eigene, nicht-rollierende
+Funktion, bewusst getrennt von ``run_walk_forward``. Welche Zeitreihe Proxy und welche
+real ist, entscheidet der Aufrufer (Datenpfad/Quant Researcher) -- dieses Modul sieht
+nur zwei DataFrames. Die vom Board verlangte sichtbare Kennzeichnung ("Proxy-Historie
+USDT") ist ein generisches ``label``-Feld auf dem Ergebnis, kein hartcodierter
+Symbolname.
 """
 
 from __future__ import annotations
@@ -155,6 +166,10 @@ class WalkForwardResult:
     symbol: str
     spec: WindowSpec
     windows: list[WindowResult]
+    # Sichtbare Kennzeichnung der Datenquelle hinter diesem Lauf, z. B. "Proxy-Historie
+    # USDT" (Board-Entscheidung HED-125, Punkt 4). Generisch, kein hartcodierter Name --
+    # der Aufrufer setzt den Text, dieses Modul trägt ihn nur unverändert durch.
+    label: str | None = None
 
     @property
     def total_pnl(self) -> float:
@@ -176,10 +191,12 @@ class WalkForwardResult:
         rates = [w.win_rate_pct for w in self.windows if w.trade_count > 0]
         return sum(rates) / len(rates) if rates else float("nan")
 
-    def summary(self) -> dict[str, float | int]:
+    def summary(self) -> dict[str, float | int | str | None]:
         """Zusammenfassende Kennzahl über alle Fenster, zusätzlich zu den Einzelwerten
-        je Fenster (laut Auftrag: "zusätzlich eine zusammenfassende Kennzahl")."""
+        je Fenster (laut Auftrag: "zusätzlich eine zusammenfassende Kennzahl"). Trägt
+        ``label`` mit, damit die Kennzeichnung nicht separat mitgeführt werden muss."""
         return {
+            "label": self.label,
             "n_windows": len(self.windows),
             "total_pnl": self.total_pnl,
             "total_trades": self.total_trades,
@@ -196,6 +213,7 @@ def run_walk_forward(
     *,
     cash: float = 10_000.0,
     fit: Callable[[pd.DataFrame], dict[str, Any]] | None = None,
+    label: str | None = None,
 ) -> WalkForwardResult:
     """Führt die Strategie über jedes Fenster von ``spec`` aus, Kosten aus ``cost_model``
     auf jeden Fill.
@@ -242,4 +260,78 @@ def run_walk_forward(
                 stats=stats,
             )
         )
-    return WalkForwardResult(symbol=cost_model.symbol, spec=spec, windows=results)
+    return WalkForwardResult(symbol=cost_model.symbol, spec=spec, windows=results, label=label)
+
+
+@dataclass(frozen=True, slots=True)
+class HoldoutResult:
+    """Ergebnis eines einzigen, nicht-rollierenden Out-of-Sample-Fensters.
+
+    Für die vom Board verlangte Abnahme-Strecke (HED-125, Hybrid-Entscheidung, Punkt 2):
+    die echten Monate des handelbaren Universums bilden ein letztes, festes Fenster --
+    kein weiteres Rollieren darüber. Deshalb eine eigene, einfachere Form als
+    ``WindowResult`` (kein ``window``-Geometrieobjekt, es gibt nur dieses eine Fenster).
+    """
+
+    train_start: pd.Timestamp | None
+    train_end: pd.Timestamp | None
+    test_start: pd.Timestamp
+    test_end: pd.Timestamp
+    pnl: float
+    win_rate_pct: float
+    trade_count: int
+    stats: pd.Series = field(repr=False)
+    label: str | None = None
+
+    def summary(self) -> dict[str, float | int | str | None]:
+        return {
+            "label": self.label,
+            "pnl": self.pnl,
+            "win_rate_pct": self.win_rate_pct,
+            "trade_count": self.trade_count,
+        }
+
+
+def run_final_holdout(
+    test_frame: pd.DataFrame,
+    strategy_cls: type[Strategy],
+    cost_model: BacktestCostModel,
+    *,
+    train_frame: pd.DataFrame | None = None,
+    cash: float = 10_000.0,
+    fit: Callable[[pd.DataFrame], dict[str, Any]] | None = None,
+    label: str | None = None,
+) -> HoldoutResult:
+    """Ein einziger, fester Out-of-Sample-Test über ``test_frame`` -- kein Rollieren.
+
+    ``train_frame``, wenn gesetzt, geht nur in ``fit`` ein (siehe ``run_walk_forward``
+    für die Semantik von ``fit``); ohne ``fit`` ist es bedeutungslos und darf entfallen.
+    Gedacht für die Board-Vorgabe, die echten Monate des handelbaren Universums als ein
+    einziges, nicht weiter zerlegtes Abnahme-Fenster zu behandeln, getrennt von den
+    rollierenden Fenstern aus ``run_walk_forward`` (die z. B. auf einer längeren
+    Proxy-Historie laufen können -- welche Zeitreihe hier übergeben wird, entscheidet
+    der Aufrufer, nicht dieses Modul).
+    """
+    params = fit(train_frame) if fit is not None and train_frame is not None else {}
+    bt = Backtest(
+        test_frame,
+        strategy_cls,
+        cash=cash,
+        commission=cost_model.commission,
+        spread=cost_model.backtesting_spread_param,
+        finalize_trades=True,
+    )
+    stats = bt.run(**params)
+    trade_count = int(stats["# Trades"])
+    win_rate = float(stats["Win Rate [%]"]) if trade_count > 0 else float("nan")
+    return HoldoutResult(
+        train_start=train_frame.index[0] if train_frame is not None else None,
+        train_end=train_frame.index[-1] if train_frame is not None else None,
+        test_start=test_frame.index[0],
+        test_end=test_frame.index[-1],
+        pnl=float(stats["Equity Final [$]"]) - cash,
+        win_rate_pct=win_rate,
+        trade_count=trade_count,
+        stats=stats,
+        label=label,
+    )

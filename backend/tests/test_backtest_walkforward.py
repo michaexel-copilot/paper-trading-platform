@@ -16,6 +16,7 @@ from app.backtest_walkforward import (
     InsufficientHistory,
     WindowSpec,
     build_windows,
+    run_final_holdout,
     run_walk_forward,
 )
 
@@ -222,3 +223,102 @@ def test_window_without_any_trade_reports_nan_win_rate_and_is_excluded_from_the_
     assert all(w.win_rate_pct != w.win_rate_pct for w in result.windows)  # NaN != NaN
     assert result.mean_win_rate_pct != result.mean_win_rate_pct  # NaN, keine 0-Trades-Täuschung
     assert result.summary()["windows_with_a_trade"] == 0
+
+
+# --- label: sichtbare Kennzeichnung der Datenquelle (Board-Entscheidung HED-125) ----
+
+
+def test_label_is_carried_through_to_the_summary():
+    frame = _zigzag_ohlcv(30)
+    spec = WindowSpec(n_windows=4, train_bars=10, test_bars=5)
+    model = cost_model_for("BTC/USDC")
+
+    result = run_walk_forward(frame, _DailyFlip, model, spec, label="Proxy-Historie USDT")
+
+    assert result.label == "Proxy-Historie USDT"
+    assert result.summary()["label"] == "Proxy-Historie USDT"
+
+
+def test_label_defaults_to_none_when_not_given():
+    frame = _zigzag_ohlcv(30)
+    spec = WindowSpec(n_windows=4, train_bars=10, test_bars=5)
+    model = cost_model_for("BTC/USDC")
+
+    result = run_walk_forward(frame, _DailyFlip, model, spec)
+
+    assert result.label is None
+    assert result.summary()["label"] is None
+
+
+# --- run_final_holdout: ein einziges, festes Out-of-Sample-Fenster (HED-125 Punkt 2) -
+
+
+def test_run_final_holdout_runs_a_single_fixed_window_without_rolling():
+    holdout_frame = _zigzag_ohlcv(10)
+    model = cost_model_for("BTC/USDC")
+
+    result = run_final_holdout(holdout_frame, _DailyFlip, model, label="echte USDC-Monate")
+
+    assert result.trade_count > 0
+    assert isinstance(result.pnl, float)
+    assert result.train_start is None and result.train_end is None
+    assert result.test_start == holdout_frame.index[0]
+    assert result.test_end == holdout_frame.index[-1]
+    assert result.label == "echte USDC-Monate"
+    assert result.summary() == {
+        "label": "echte USDC-Monate",
+        "pnl": result.pnl,
+        "win_rate_pct": result.win_rate_pct,
+        "trade_count": result.trade_count,
+    }
+
+
+def test_run_final_holdout_fits_on_the_train_frame_when_given():
+    train_frame = _zigzag_ohlcv(10)
+    holdout_frame = _zigzag_ohlcv(10)
+    model = cost_model_for("BTC/USDC")
+    seen = []
+
+    def fit(df: pd.DataFrame) -> dict:
+        seen.append(df)
+        return {}
+
+    result = run_final_holdout(holdout_frame, _DailyFlip, model, train_frame=train_frame, fit=fit)
+
+    assert len(seen) == 1
+    assert seen[0] is train_frame
+    assert result.train_start == train_frame.index[0]
+    assert result.train_end == train_frame.index[-1]
+
+
+def test_final_holdout_is_not_rolled_even_if_it_would_fit_more_than_one_window():
+    """Anders als `run_walk_forward` zerlegt `run_final_holdout` seine Eingabe nie in
+    mehrere Fenster -- die ganze übergebene Reihe ist EIN Test, wie von der Board-
+    Entscheidung verlangt ("kein weiteres Rollieren darüber")."""
+    holdout_frame = _zigzag_ohlcv(40)  # groß genug für mehrere Fenster, wird trotzdem nicht geteilt
+    model = cost_model_for("BTC/USDC")
+
+    result = run_final_holdout(holdout_frame, _DailyFlip, model)
+
+    assert result.test_start == holdout_frame.index[0]
+    assert result.test_end == holdout_frame.index[-1]
+
+
+def test_proxy_windows_and_real_final_holdout_compose_the_board_methodology():
+    """Demonstriert die vom Board verlangte Zusammensetzung (HED-125, Hybrid): mehrere
+    rollierende Fenster auf einer (hier synthetischen) Proxy-Reihe, gefolgt von einem
+    einzigen festen Holdout auf einer separaten, "echten" Reihe -- beide mit eigenem,
+    sichtbarem Label. Reine Verdrahtung, keine Entscheidung über echte Symbole hier."""
+    proxy_frame = _zigzag_ohlcv(30)  # staende fuer die lange USDT-Proxy-Historie
+    real_frame = _zigzag_ohlcv(8)  # staende fuer die echten USDC-Monate
+    spec = WindowSpec(n_windows=4, train_bars=10, test_bars=5)
+    model = cost_model_for("BTC/USDC")
+
+    rolling = run_walk_forward(proxy_frame, _DailyFlip, model, spec, label="Proxy-Historie USDT")
+    holdout = run_final_holdout(
+        real_frame, _DailyFlip, model, train_frame=proxy_frame, label="echte USDC-Monate"
+    )
+
+    assert rolling.label != holdout.label
+    assert len(rolling.windows) == 4
+    assert holdout.test_start == real_frame.index[0]
