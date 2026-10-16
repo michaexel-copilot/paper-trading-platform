@@ -141,6 +141,22 @@ async def test_hebe_firmenweit_auf_mit_automatischem_ausloeser_wird_abgelehnt(se
     assert await ist_firmenweit_gesperrt(session) is True
 
 
+async def test_hebe_firmenweit_auf_mit_ausloeser_cro_wird_abgelehnt(session):
+    """HED-105: Risikopolitik HED-8 Fassung 1.4 Abschnitt 6.2/6.3 erlaubt für das
+    firmenweite Kennzeichen ausschließlich 'board' als Aufheben-Auslöser -- der CRO
+    darf das Kennzeichen je Strategie aufheben (Stufe 1), aber nicht das firmenweite."""
+    await setze_firmenweit(session, ausloeser="cro", begruendung="Stufe 2", entscheider="cro.m")
+    with pytest.raises(ValueError):
+        await hebe_firmenweit_auf(
+            session,
+            entscheider_1="cro.mueller",
+            entscheider_2="ceo.schmidt",
+            begruendung="x",
+            ausloeser="cro",
+        )
+    assert await ist_firmenweit_gesperrt(session) is True
+
+
 # --- Strategie: Setzen und Aufheben, keine Zwei-Personen-Regel -------------------------
 
 
@@ -170,6 +186,17 @@ async def test_hebe_strategie_auf_mit_einem_entscheider(session):
 async def test_hebe_strategie_auf_ohne_vorhandenes_kennzeichen_schlaegt_fehl(session):
     with pytest.raises(ValueError):
         await hebe_strategie_auf(session, "s_unbekannt", entscheider="a", begruendung="x")
+
+
+async def test_hebe_strategie_auf_mit_ausloeser_cro_bleibt_zulaessig(session):
+    """HED-105: die Einschränkung auf 'board' gilt nur für das firmenweite
+    Kennzeichen (Abschnitt 6.3) -- für das Strategie-Kennzeichen bleibt 'cro'
+    nach Abschnitt 6.2 ('Aufheben: Stufe 1 der CRO.') unverändert zulässig."""
+    await setze_strategie(session, "s1", ausloeser="stufe1", begruendung="Limitbruch")
+    await hebe_strategie_auf(
+        session, "s1", entscheider="cro.mueller", begruendung="geprüft", ausloeser="cro"
+    )
+    assert await ist_strategie_gesperrt(session, "s1") is False
 
 
 async def test_setze_strategie_zweimal_schreibt_zwei_protokollzeilen(session):

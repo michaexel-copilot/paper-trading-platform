@@ -11,10 +11,15 @@ Die Asymmetrie aus Abschnitt 9.5 ist strukturell erzwungen, nicht nur dokumentie
 - ``setze_firmenweit`` nimmt jeden Auslöser aus ``AUSLOESER`` an, darunter die fünf
   automatischen aus Abschnitt 9.5 -- für diese ist ``entscheider`` optional, weil das
   System selbst setzt.
-- ``hebe_firmenweit_auf`` nimmt **nur** ``board`` oder ``cro`` als Auslöser und verlangt
-  zwingend zwei verschiedene namentliche Entscheider (Zwei-Personen-Regel, Abnahmepunkt
-  A19, CRO-freigegeben). Es gibt keine Funktion, keinen Parameter und keinen Codepfad,
-  der eine automatische Aufhebung auslösen könnte.
+- ``hebe_firmenweit_auf`` nimmt **ausschließlich** ``board`` als Auslöser (Risikopolitik
+  HED-8 Fassung 1.4 Abschnitt 6.2/6.3: "Aufgehoben wird das firmenweite Kennzeichen
+  ausschließlich durch das Board ... keine Strategie, kein Agent und kein Prozess darf
+  es selbst löschen oder umgehen.") und verlangt zwingend zwei verschiedene namentliche
+  Entscheider (Zwei-Personen-Regel, Abnahmepunkt A19, CRO-freigegeben). Es gibt keine
+  Funktion, keinen Parameter und keinen Codepfad, der eine automatische Aufhebung
+  auslösen könnte.
+- ``hebe_strategie_auf`` nimmt weiterhin ``board`` oder ``cro`` als Auslöser (Abschnitt
+  6.2: "Aufheben: Stufe 1 der CRO.") -- das betrifft nur das Kennzeichen je Strategie.
 
 Checkpoint im Sinne von Abschnitt 9.2, Festlegung 3: Dieses Modul ist nicht selbst einer
 der drei Prüfpunkte. Es verwaltet nur den Zustand, den ``app.sperrkennzeichen`` liest.
@@ -49,9 +54,12 @@ FIRMENWEIT_SETZEN_AUSLOESER = frozenset(
 # fünf automatischen 9.5-Auslöser gehört hierher -- die sind ausdrücklich Auslöser des
 # *firmenweiten* Kennzeichens.
 STRATEGIE_SETZEN_AUSLOESER = frozenset({"board", "cro", "stufe1"})
-# Entwurf 9.4: "Einziger Aufhebungsweg: Board-Freigabe." Keine Systemlogik, kein
-# automatischer Auslöser -- für beide Kennzeichen.
-AUFHEBEN_AUSLOESER = frozenset({"board", "cro"})
+# Risikopolitik HED-8 Fassung 1.4 Abschnitt 6.2/6.3 (Nebenbefund HED-105): das
+# firmenweite Kennzeichen hebt ausschließlich das Board auf -- kein Agent, kein
+# Prozess, auch nicht der CRO. Keine Systemlogik, kein automatischer Auslöser.
+FIRMENWEIT_AUFHEBEN_AUSLOESER = frozenset({"board"})
+# Abschnitt 6.2: das Kennzeichen je Strategie hebt zusätzlich der CRO auf (Stufe 1).
+STRATEGIE_AUFHEBEN_AUSLOESER = frozenset({"board", "cro"})
 
 
 class ZweiPersonenRegelVerletzt(ValueError):
@@ -141,11 +149,13 @@ async def hebe_firmenweit_auf(
 ) -> None:
     """Einziger Aufhebungsweg für das firmenweite Kennzeichen (Entwurf 9.4).
 
+    Nur das Board darf aufheben (Risikopolitik HED-8 Fassung 1.4 Abschnitt 6.2/6.3) --
+    der CRO ist hier bewusst ausgeschlossen, anders als bei ``hebe_strategie_auf``.
     Zwei-Personen-Regel (A19, CRO-freigegeben): zwei verschiedene namentliche
     Entscheider sind Pflicht. Ein Verstoß ändert den Zustand nicht -- fail closed, die
     Sperre bleibt gesetzt, bis eine gültige Aufhebung vorliegt.
     """
-    if ausloeser not in AUFHEBEN_AUSLOESER:
+    if ausloeser not in FIRMENWEIT_AUFHEBEN_AUSLOESER:
         raise ValueError(f"Unzulässiger Auslöser für Aufhebung: {ausloeser!r}")
     e1 = (entscheider_1 or "").strip()
     e2 = (entscheider_2 or "").strip()
@@ -225,12 +235,13 @@ async def hebe_strategie_auf(
     begruendung: str,
     ausloeser: str = "board",
 ) -> None:
-    """Board-Freigabe hebt das Strategie-Kennzeichen auf (Entwurf 9.1-Tabelle).
+    """Board oder CRO heben das Strategie-Kennzeichen auf (Entwurf 9.1-Tabelle,
+    Risikopolitik HED-8 Fassung 1.4 Abschnitt 6.2: "Aufheben: Stufe 1 der CRO.").
 
     Keine Zwei-Personen-Regel hier -- A19 beschränkt sie ausdrücklich auf die
     Aufhebung des firmenweiten Kennzeichens, als risikoreichste Einzelaktion.
     """
-    if ausloeser not in AUFHEBEN_AUSLOESER:
+    if ausloeser not in STRATEGIE_AUFHEBEN_AUSLOESER:
         raise ValueError(f"Unzulässiger Auslöser für Aufhebung: {ausloeser!r}")
     if not entscheider or not entscheider.strip():
         raise ValueError("Eine namentliche Entscheider-Kennung ist Pflicht.")
