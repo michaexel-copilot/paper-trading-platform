@@ -11,7 +11,7 @@ import pytest
 from app.marketdata.base import DataUnavailable, MarketDataSource, NotListed, SourceError
 from app.marketdata.cache import TTLCache, quote_ttl
 from app.marketdata.calendars import market_status
-from app.marketdata.ccxt_adapter import CcxtSource
+from app.marketdata.ccxt_adapter import OHLCV_EMPTY_WINDOW_STRIDE_BARS, CcxtSource
 from app.marketdata.router import AssetRef, SourceRouter
 from app.marketdata.service import classify
 from app.marketdata.yahoo_adapter import YahooSource
@@ -143,6 +143,52 @@ async def test_ccxt_history_is_ascending_and_deduplicated():
     assert len(bars) == len(recorded)
     assert [bar.time for bar in bars] == sorted(bar.time for bar in bars)
     assert bars[-1].close == Decimal(str(recorded[-1][4]))
+
+
+async def test_ccxt_history_skips_an_empty_window_before_the_listing_date():
+    """HED-123: `since` is a fixed lookback applied to every instrument, so it
+    can predate an instrument's actual listing. An empty first page must not
+    be read as "no history exists" -- the fetch has to skip past the empty
+    window(s) and still find the real first candle.
+    """
+    recorded = fixture("okx_ohlcv_btc_usdt_1d.json")
+    listed_at = recorded[0][0]
+
+    class RecentlyListed(RecordedExchange):
+        async def fetch_ohlcv(self, symbol, timeframe, since, limit):
+            self.calls.append("fetch_ohlcv")
+            if since < listed_at:
+                return []
+            return [row for row in recorded if row[0] >= since]
+
+    since = datetime.fromtimestamp(listed_at / 1000, UTC) - timedelta(
+        days=2 * OHLCV_EMPTY_WINDOW_STRIDE_BARS
+    )
+    source = CcxtSource("okx", RecentlyListed())
+
+    bars = await source.fetch_ohlcv("BTC/USDT", "1d", since)
+
+    assert [bar.close for bar in bars] == [Decimal(str(row[4])) for row in recorded]
+
+
+async def test_ccxt_history_gives_up_once_the_empty_window_reaches_now():
+    """A symbol with genuinely no history (or one this source never lists at
+    the requested `since`) must not probe forever -- the search is bounded by
+    the wall clock, not just the empty-window counter.
+    """
+
+    class NeverListed(RecordedExchange):
+        async def fetch_ohlcv(self, symbol, timeframe, since, limit):
+            self.calls.append("fetch_ohlcv")
+            return []
+
+    exchange = NeverListed()
+    source = CcxtSource("okx", exchange)
+
+    bars = await source.fetch_ohlcv("BTC/USDT", "1d", datetime(2015, 1, 1, tzinfo=UTC))
+
+    assert bars == []
+    assert exchange.calls.count("fetch_ohlcv") < 100
 
 
 async def test_ccxt_search_matches_the_base_currency():

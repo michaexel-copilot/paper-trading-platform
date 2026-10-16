@@ -1,6 +1,6 @@
 import asyncio
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import ccxt
@@ -16,6 +16,18 @@ MARKETS_TTL_SECONDS = 24 * 3600
 # list a coin only against USDT.
 SEARCH_QUOTES = ("USDC", "USD", "EUR", "USDT")
 OHLCV_PAGE_LIMIT = 40
+TIMEFRAME_STEP = {"1d": timedelta(days=1), "1h": timedelta(hours=1)}
+# Bars worth of time to skip when a page comes back empty (HED-123): a
+# generous stride so a handful of probes can clear a multi-year gap between
+# `since` and an instrument's actual listing date. Not tied to any one
+# exchange's real page size -- it only has to be large enough to make
+# progress, never so large that it steps past genuine data.
+OHLCV_EMPTY_WINDOW_STRIDE_BARS = 300
+# Safety bound on empty-window probes, independent of OHLCV_PAGE_LIMIT (which
+# only counts pages that actually returned data). Keeps a single request a
+# user is waiting on from turning into an unbounded number of round trips if
+# an exchange keeps answering empty for some other reason.
+OHLCV_MAX_EMPTY_WINDOWS = 20
 
 
 def _amount_step(exchange, market: dict) -> Decimal | None:
@@ -112,14 +124,31 @@ class CcxtSource:
         self, symbol: str, timeframe: str, since: datetime, limit: int | None = None
     ) -> list[Bar]:
         await self.instrument(symbol)
+        step_ms = int(TIMEFRAME_STEP[timeframe].total_seconds() * 1000)
         cursor = int(since.timestamp() * 1000)
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
         rows: dict[int, list] = {}
+        empty_windows = 0
         # Exchanges cap the bars per request, so page forward until caught up.
         for _ in range(OHLCV_PAGE_LIMIT):
             page = await self._call("fetch_ohlcv", symbol, timeframe, cursor, None)
             new = [row for row in page if row[0] not in rows and row[0] >= cursor]
             if not new:
-                break
+                if page:
+                    break  # every row already on record: caught up with the exchange
+                # An empty page is not proof there is no history (HED-123):
+                # `since` is often a fixed lookback (e.g. 5 years) applied to
+                # every instrument, including ones listed more recently, so
+                # the window just probed can simply be before the actual
+                # listing date. Skip it and keep looking, bounded by
+                # OHLCV_MAX_EMPTY_WINDOWS and by the wall clock so this
+                # cannot turn into an unbounded number of round trips.
+                empty_windows += 1
+                if empty_windows > OHLCV_MAX_EMPTY_WINDOWS or cursor >= now_ms:
+                    break
+                cursor += step_ms * OHLCV_EMPTY_WINDOW_STRIDE_BARS
+                continue
+            empty_windows = 0
             for row in new:
                 rows[row[0]] = row
             cursor = max(rows) + 1
