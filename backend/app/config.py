@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     # Demo-Schlüssel zu einer anderen OKX-Einheit gehören.
     okx_demo_hostname: str = "eea.okx.com"
 
+    # HED-119: on-disk cache for historical OHLCV used by backtests. Separate
+    # from database_url on purpose -- a backtest data path has no business
+    # near the trading database (live or paper).
+    backtest_cache_dir: str = "./data/backtest_cache"
+
     # Board-Benachrichtigung (HED-43, Entwurf 5.3): E-Mail an die Board-Verteilerliste je
     # Vorschlag in Z3. Nur Python-Standardbibliothek (smtplib) -- bewusst kein
     # Drittanbieter-Versanddienst, um die Prüfkarte aus Anhang A zu vermeiden (Entwurf
