@@ -10,6 +10,10 @@ dependencies = [
     "aiosqlite>=0.22.1",
     "alembic>=1.20.0",
     "argon2-cffi>=25.1.0",
+    # Einzeln freigegeben (HED-10 Abschnitt 4.4, AGPL-3.0): exakt gepinnt, nicht
+    # "unverändert benutzen" eines Versionsbereichs. Versionssprung braucht erneute
+    # Prüfung, siehe Datenquellen-Katalog.
+    "backtesting==0.6.5",
     "ccxt>=4.5.84",
     "exchange-calendars>=4.13.2",
     "fastapi>=0.142.1",
