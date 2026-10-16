@@ -26,6 +26,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +34,11 @@ from app.betriebsart import Betriebsart, get_betriebsart
 from app.models.versandengpass import VersandEngpassEintrag
 from app.schluessel import SchluesselFehler, read_exchange_credential
 from app.sperrkennzeichen import doppelpruefung_offen
+
+if TYPE_CHECKING:
+    # Nur für Typprüfung -- kein Laufzeitimport am Dateikopf (Auflage 4, Abschnitt 3.4):
+    # app.trading.papier ist im Live-Artefakt nicht vorhanden.
+    from app.trading.papier.okx_demo import OffeneAlgoOrder, OrderStatusErgebnis
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +75,16 @@ class VersandOrder:
     order_type: str
     proposal_id: int | None = None
     limit_price: Decimal | None = None
+    # B-12 (HED-84, Entwurf Abschnitt 7.1): Triggerkurs einer Stop-Market-Order.
+    stop_price: Decimal | None = None
+    # B-12, Festlegung F-10 (Entwurf Abschnitt 7.4): rein dokumentarischer Bezug zum
+    # Vorschlag, der den Stop ausgelöst hat. Wird von keinem Prüfschritt gelesen --
+    # Stop-Order laufen bewusst mit proposal_id=None, sonst lehnt pruefe_stufe2 sie
+    # systematisch ab (siehe dort).
+    anlass_proposal_id: int | None = None
+    # B-12, Gattung "stornierung": die Gegenstellen-Algo-Id des zu stornierenden Stops.
+    # Nur für diese Gattung gesetzt und gelesen (siehe Versandengpass.storniere).
+    ziel_order_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +116,8 @@ def _order_referenz(order: VersandOrder) -> dict:
         "order_type": order.order_type,
         "proposal_id": order.proposal_id,
         "limit_price": str(order.limit_price) if order.limit_price is not None else None,
+        "stop_price": str(order.stop_price) if order.stop_price is not None else None,
+        "anlass_proposal_id": order.anlass_proposal_id,
     }
 
 
@@ -178,13 +196,87 @@ class Versandengpass:
 
         Live-Betriebsart: weiterhin nicht gebaut. B-6 deckt ausdrücklich keinen
         Live-Orderpfad und keinen Live-Schlüssel ab.
+
+        B-12 (Festlegung F-9): Gattung ``stornierung`` ist kein neuer Auftrag, sondern
+        die Aufhebung eines bestehenden Stops -- eigener Zweig, eigener ccxt-Aufruf
+        (``storniere_algo_order``), aber derselbe Versand-Engpass, dieselbe
+        Protokollzeile.
         """
         if get_betriebsart() is Betriebsart.PAPIER:
-            from app.trading.papier.okx_demo import platziere_order
+            from app.trading.papier.okx_demo import platziere_order, storniere_algo_order
 
             credential = read_exchange_credential(order.exchange)
+            if order.gattung == "stornierung":
+                return await storniere_algo_order(credential, order.ziel_order_id, order.symbol)
             return await platziere_order(credential, order)
         raise NotImplementedError(
             f"Live-Orderpfad für {order.exchange} {order.symbol} ist noch nicht gebaut. "
             "B-6 deckt ausschließlich den OKX-Demo-Orderpfad ab."
         )
+
+    async def storniere(self, session: AsyncSession, order: VersandOrder) -> VersandErgebnis:
+        """Stornierung eines bestehenden Stops (B-12, Festlegung F-9). Läuft durch
+        dieselben sieben Prüfschritte wie jede andere Order (Auflage 3) -- kein
+        Sonderweg. ``order.gattung`` muss ``"stornierung"`` sein, ``order.ziel_order_id``
+        die zu stornierende Gegenstellen-Algo-Id."""
+        if order.gattung != "stornierung":
+            raise ValueError(
+                f"storniere() erwartet gattung='stornierung', nicht {order.gattung!r}"
+            )
+        if not order.ziel_order_id:
+            raise ValueError("storniere() ohne ziel_order_id -- nichts zu stornieren")
+        return await self.send(session, order)
+
+    async def lese_order_status(
+        self, exchange: str, order_id: str, symbol: str
+    ) -> "OrderStatusErgebnis | None":
+        """Reiner Lesevorgang (Auflage 3, Festlegung F-1 Punkt 2): Status/Füllmenge
+        einer Einstiegs-Order. Nicht der Doppelprüfung der Sperrkennzeichen unterworfen
+        -- ein gesetztes Kennzeichen darf das Hinsehen nicht verbieten.
+
+        ``None`` bei jedem Fehlschlag (Timeout, Ablehnung, Formatfehler) -- der
+        Aufrufer (``app.trading.stop_pflicht``) entscheidet über die Konsequenz
+        (bleibt in Z10, kein stiller Zwischenzustand), analog zu
+        ``app.schluessel.verifiziere_kontostand``.
+        """
+        credential = read_exchange_credential(exchange)
+        if get_betriebsart() is not Betriebsart.PAPIER:
+            log.error(
+                "Kein Live-Lesevorgang für Order-Status gebaut (%s %s) -- B-12 deckt "
+                "ausschließlich OKX-Demo ab.",
+                exchange,
+                symbol,
+            )
+            return None
+        from app.trading.papier.okx_demo import OkxDemoFehler, lese_order_status
+
+        try:
+            return await lese_order_status(credential, order_id, symbol)
+        except OkxDemoFehler:
+            log.exception("Order-Status-Lesevorgang für %s %s fehlgeschlagen", symbol, order_id)
+            return None
+
+    async def lese_offene_stop_orders(
+        self, exchange: str, symbol: str
+    ) -> "list[OffeneAlgoOrder] | None":
+        """Reiner Lesevorgang (Auflage 3, Festlegung F-1 Punkt 2): offene OKX-Algo-Order
+        für den täglichen Abgleich. ``None`` bei Fehlschlag -- der Aufrufer
+        (``app.trading.stop_orderbuch_abgleich``) behandelt das als gescheiterten
+        Durchlauf (Auslöser ``stop_orderbuch_abgleich_fehlgeschlagen``), nicht als
+        leeres Ergebnis."""
+        credential = read_exchange_credential(exchange)
+        if get_betriebsart() is not Betriebsart.PAPIER:
+            log.error(
+                "Kein Live-Lesevorgang für offene Stop-Order gebaut (%s %s) -- B-12 "
+                "deckt ausschließlich OKX-Demo ab.",
+                exchange,
+                symbol,
+            )
+            return None
+        from app.trading.papier.okx_demo import OkxDemoFehler, lese_offene_algo_orders
+
+        try:
+            return await lese_offene_algo_orders(credential, symbol)
+        except OkxDemoFehler:
+            log.exception("Lesevorgang offene Stop-Order für %s fehlgeschlagen", symbol)
+            return None

@@ -31,6 +31,10 @@ STATE_GEFUELLT = "gefuellt"  # Z11, terminal
 STATE_TEILGEFUELLT_BEENDET = "teilgefuellt_beendet"  # Z12, terminal
 STATE_VON_GEGENSTELLE_ABGELEHNT = "von_gegenstelle_abgelehnt"  # Z13, terminal
 
+# B-12 (HED-84, Entwurf Abschnitt 6.3/7.1): Übergänge Z8->Z10->Z11/Z12/Z13 waren in
+# ALLOWED_TRANSITIONS bereits vorgesehen (Tabelle 4.2), wurden bis hierhin aber von
+# niemandem ausgelöst -- B-12 ist der erste Baustein, der sie benutzt.
+
 # Z0 allows both Z1 and Z2 directly (e.g. the sperrkennzeichen check before stage 1 can
 # reject without ever entering stufe1_laeuft); Z1 separately allows both Z2 and Z3. Both
 # rows come straight from table 4.2, not a derived shortcut.
@@ -124,6 +128,14 @@ class Proposal(Base):
     rejection_reason_text: Mapped[str | None] = mapped_column(String(500))
     approval_token: Mapped[str | None] = mapped_column(String(64), unique=True)
     limit_price: Mapped[Decimal | None] = mapped_column(Money)
+
+    # B-12 (HED-84, Entwurf Abschnitt 6.3): Versand-Treiber und Fill-Erkennung.
+    # gegenstellen_order_id ist die OKX-Order-Id der Einstiegs-Order -- ohne sie ist der
+    # Status nicht abfragbar (lese_order_status). gefuellte_menge ist die tatsächlich
+    # gefüllte Menge und damit der Eingang der Stop-Größe (Festlegung F-7); bewusst
+    # getrennt von `size` (die freigegebene Ordergröße bleibt unverändert, Entwurf 6.3).
+    gegenstellen_order_id: Mapped[str | None] = mapped_column(String(100))
+    gefuellte_menge: Mapped[Decimal | None] = mapped_column(Money)
 
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
 

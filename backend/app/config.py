@@ -80,6 +80,24 @@ class Settings(BaseSettings):
     dashboard_base_url: str = ""
     notify_poll_seconds: int = 15
 
+    # B-12 (HED-84, CRO-Abnahme HED-104 Fassung 1.0 "angenommen mit Nachforderungen für
+    # Fassung 1.1"): Mechanismus und Eskalationslogik sind freigegeben, die konkreten
+    # Zahlen sind Risikoparameter und noch kein Board-Beschluss (E-3/E-8/E-9 bleiben
+    # offen). Die drei Werte unten sind die im Entwurf benannten Standardannahmen --
+    # NICHT fest verdrahtet, sondern hier als Settings, damit sie ohne Code-Änderung
+    # durch den anstehenden CRO-Vorschlag ersetzt werden können, sobald er vorliegt.
+    versand_treiber_intervall_sekunden: int = 15
+    stop_pflicht_intervall_sekunden: int = 15
+    # E-3: Pflicht-Stop-Nachfrist, danach Kill-Switch Stufe 2
+    # (`pflicht_stop_nicht_platziert`, Entwurf Abschnitt 7.5).
+    pflicht_stop_nachfrist_sekunden: int = 120
+    # E-8: Mengen-Rundungstoleranz beim täglichen Abgleich, als Anteil (0.001 = 0,1 %)
+    # der Fill-Größe (Entwurf Abschnitt 10.3).
+    stop_mengen_rundungstoleranz: str = "0.001"
+    stop_orderbuch_abgleich_intervall_sekunden: int = 24 * 3600
+    # E-9: Totmannfrist des täglichen Abgleichs (Entwurf Abschnitt 10.6).
+    stop_orderbuch_totmannfrist_sekunden: int = 26 * 3600
+
     def board_notify_email_list(self) -> list[str]:
         return [addr.strip() for addr in self.board_notify_emails.split(",") if addr.strip()]
 

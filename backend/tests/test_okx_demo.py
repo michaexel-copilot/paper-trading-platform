@@ -39,6 +39,7 @@ class _Order:
             quantity=Decimal("0.01"),
             order_type="market",
             limit_price=None,
+            stop_price=None,
         )
         felder.update(overrides)
         for name, wert in felder.items():
@@ -52,17 +53,32 @@ class FakeOkxClient:
         create_order_exc=None,
         account_balance_result=None,
         account_balance_exc=None,
+        fetch_order_result=None,
+        fetch_order_exc=None,
+        fetch_open_orders_result=None,
+        fetch_open_orders_exc=None,
+        cancel_order_result=None,
+        cancel_order_exc=None,
     ):
         self._create_order_result = create_order_result
         self._create_order_exc = create_order_exc
         self._account_balance_result = account_balance_result
         self._account_balance_exc = account_balance_exc
+        self._fetch_order_result = fetch_order_result
+        self._fetch_order_exc = fetch_order_exc
+        self._fetch_open_orders_result = fetch_open_orders_result
+        self._fetch_open_orders_exc = fetch_open_orders_exc
+        self._cancel_order_result = cancel_order_result
+        self._cancel_order_exc = cancel_order_exc
         self.closed = False
         self.create_order_calls = []
         self.private_get_account_balance_calls = 0
+        self.fetch_order_calls = []
+        self.fetch_open_orders_calls = []
+        self.cancel_order_calls = []
 
-    async def create_order(self, symbol, order_type, side, amount, price=None):
-        self.create_order_calls.append((symbol, order_type, side, amount, price))
+    async def create_order(self, symbol, order_type, side, amount, price=None, params=None):
+        self.create_order_calls.append((symbol, order_type, side, amount, price, params or {}))
         if self._create_order_exc:
             raise self._create_order_exc
         return self._create_order_result
@@ -76,6 +92,24 @@ class FakeOkxClient:
         if self._account_balance_exc:
             raise self._account_balance_exc
         return self._account_balance_result
+
+    async def fetch_order(self, order_id, symbol):
+        self.fetch_order_calls.append((order_id, symbol))
+        if self._fetch_order_exc:
+            raise self._fetch_order_exc
+        return self._fetch_order_result
+
+    async def fetch_open_orders(self, symbol, params=None):
+        self.fetch_open_orders_calls.append((symbol, params or {}))
+        if self._fetch_open_orders_exc:
+            raise self._fetch_open_orders_exc
+        return self._fetch_open_orders_result
+
+    async def cancel_order(self, order_id, symbol, params=None):
+        self.cancel_order_calls.append((order_id, symbol, params or {}))
+        if self._cancel_order_exc:
+            raise self._cancel_order_exc
+        return self._cancel_order_result
 
     async def close(self):
         self.closed = True
@@ -143,7 +177,7 @@ async def test_platziere_order_erfolg(monkeypatch):
     order_id = await okx_demo.platziere_order(_credential(), _Order())
 
     assert order_id == "okx-demo-123"
-    assert fake.create_order_calls == [("BTC/USDC", "market", "buy", 0.01, None)]
+    assert fake.create_order_calls == [("BTC/USDC", "market", "buy", 0.01, None, {})]
     assert fake.closed is True
 
 
@@ -252,3 +286,239 @@ async def test_lese_kontostand_falsches_format(monkeypatch, rohdaten):
     with pytest.raises(okx_demo.OkxDemoAntwortFehler):
         await okx_demo.lese_kontostand(_credential())
     assert fake.closed is True
+
+
+# --- B-12 (HED-84): Stop-Market-Platzierung, Prüfplan P-3/P-4a ----------------------
+
+
+async def test_platziere_stop_market_order_erfolg(monkeypatch):
+    fake = FakeOkxClient(create_order_result={"id": "algo-123"})
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    order_id = await okx_demo.platziere_order(
+        _credential(),
+        _Order(order_type="stop_market", side="sell", stop_price=Decimal("47500")),
+    )
+
+    assert order_id == "algo-123"
+    assert fake.closed is True
+
+
+async def test_platziere_stop_market_order_mit_limit_price_wird_strukturell_abgewiesen(
+    monkeypatch,
+):
+    """Festlegung F-12, Ebene 3 (Falle 1, Entwurf Abschnitt 8.2): Abbruch VOR jedem
+    Netzaufruf -- der Fake-Client darf nicht einmal konstruiert werden."""
+
+    def kein_aufruf_erlaubt(_credential):
+        raise AssertionError("_client darf bei Stop-Limit-Versuch nicht aufgerufen werden")
+
+    monkeypatch.setattr(okx_demo, "_client", kein_aufruf_erlaubt)
+
+    with pytest.raises(okx_demo.OkxDemoAblehnung):
+        await okx_demo.platziere_order(
+            _credential(),
+            _Order(
+                order_type="stop_market", side="sell",
+                stop_price=Decimal("47500"), limit_price=Decimal("47400"),
+            ),
+        )
+
+
+async def test_platziere_stop_market_order_anfragekoerper(monkeypatch):
+    """P-4a: Anfragekörper-Prüfung am Fake-Client -- ``price=None`` (Literal, Falle 1),
+    ``stopLossPrice``/``tdMode=cash`` in ``params`` (Falle 2), kein ``px``/``slOrdPx``
+    in den übergebenen Zusatzparametern."""
+    fake = FakeOkxClient(create_order_result={"id": "algo-123"})
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    await okx_demo.platziere_order(
+        _credential(),
+        _Order(order_type="stop_market", side="sell", stop_price=Decimal("47500")),
+    )
+
+    [(symbol, order_type, side, amount, price, params)] = fake.create_order_calls
+    assert (symbol, order_type, side, amount) == ("BTC/USDC", "market", "sell", 0.01)
+    assert price is None
+    assert params == {"stopLossPrice": 47500.0, "tdMode": "cash"}
+    assert "slOrdPx" not in params
+    assert "px" not in params
+
+
+async def test_stop_market_order_timeout_wird_nicht_verschluckt(monkeypatch):
+    fake = FakeOkxClient(create_order_exc=ccxt.RequestTimeout("kein Pong"))
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoTimeout):
+        await okx_demo.platziere_order(
+            _credential(),
+            _Order(order_type="stop_market", side="sell", stop_price=Decimal("47500")),
+        )
+    assert fake.closed is True
+
+
+async def test_stop_market_order_ablehnung_durch_boerse(monkeypatch):
+    fake = FakeOkxClient(create_order_exc=ccxt.InvalidOrder("tdMode error"))
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoAblehnung):
+        await okx_demo.platziere_order(
+            _credential(),
+            _Order(order_type="stop_market", side="sell", stop_price=Decimal("47500")),
+        )
+    assert fake.closed is True
+
+
+# --- lese_order_status ---------------------------------------------------------------
+
+
+async def test_lese_order_status_vollstaendig_gefuellt(monkeypatch):
+    fake = FakeOkxClient(
+        fetch_order_result={
+            "status": "closed", "filled": "0.5", "remaining": "0",
+            "lastUpdateTimestamp": 1700000000000,
+        }
+    )
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnis = await okx_demo.lese_order_status(_credential(), "order-1", "BTC/USDC")
+
+    assert ergebnis.status == "gefuellt"
+    assert ergebnis.gefuellte_menge == Decimal("0.5")
+    assert fake.fetch_order_calls == [("order-1", "BTC/USDC")]
+    assert fake.closed is True
+
+
+async def test_lese_order_status_teilgefuellt_noch_offen(monkeypatch):
+    fake = FakeOkxClient(fetch_order_result={"status": "open", "filled": "0.3", "remaining": "0.2"})
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnis = await okx_demo.lese_order_status(_credential(), "order-1", "BTC/USDC")
+
+    assert ergebnis.status == "teilgefuellt"
+    assert ergebnis.gefuellte_menge == Decimal("0.3")
+    assert ergebnis.restmenge == Decimal("0.2")
+
+
+async def test_lese_order_status_offen_ohne_fuellung(monkeypatch):
+    fake = FakeOkxClient(fetch_order_result={"status": "open", "filled": "0", "remaining": "0.5"})
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnis = await okx_demo.lese_order_status(_credential(), "order-1", "BTC/USDC")
+
+    assert ergebnis.status == "offen"
+
+
+async def test_lese_order_status_beendet_mit_teilfuellung(monkeypatch):
+    fake = FakeOkxClient(
+        fetch_order_result={"status": "canceled", "filled": "0.2", "remaining": "0"}
+    )
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnis = await okx_demo.lese_order_status(_credential(), "order-1", "BTC/USDC")
+
+    assert ergebnis.status == "beendet"
+    assert ergebnis.gefuellte_menge == Decimal("0.2")
+
+
+async def test_lese_order_status_abgelehnt(monkeypatch):
+    fake = FakeOkxClient(fetch_order_result={"status": "rejected", "filled": "0"})
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnis = await okx_demo.lese_order_status(_credential(), "order-1", "BTC/USDC")
+
+    assert ergebnis.status == "abgelehnt"
+
+
+async def test_lese_order_status_timeout_wirft(monkeypatch):
+    fake = FakeOkxClient(fetch_order_exc=ccxt.RequestTimeout("kein Pong"))
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoTimeout):
+        await okx_demo.lese_order_status(_credential(), "order-1", "BTC/USDC")
+
+
+async def test_lese_order_status_unbekannter_status_wirft_antwortfehler(monkeypatch):
+    fake = FakeOkxClient(fetch_order_result={"status": "irgendwas", "filled": "0"})
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoAntwortFehler):
+        await okx_demo.lese_order_status(_credential(), "order-1", "BTC/USDC")
+
+
+# --- lese_offene_algo_orders ---------------------------------------------------------
+
+
+async def test_lese_offene_algo_orders_erfolg(monkeypatch):
+    fake = FakeOkxClient(
+        fetch_open_orders_result=[
+            {
+                "id": "algo-1", "side": "sell", "amount": "0.5",
+                "stopLossPrice": "47500", "lastUpdateTimestamp": 1700000000000,
+            }
+        ]
+    )
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnisse = await okx_demo.lese_offene_algo_orders(_credential(), "BTC/USDC")
+
+    assert len(ergebnisse) == 1
+    assert ergebnisse[0].algo_id == "algo-1"
+    assert ergebnisse[0].menge == Decimal("0.5")
+    assert ergebnisse[0].trigger_kurs == Decimal("47500")
+    assert fake.fetch_open_orders_calls == [("BTC/USDC", {"ordType": "conditional"})]
+
+
+async def test_lese_offene_algo_orders_leer(monkeypatch):
+    fake = FakeOkxClient(fetch_open_orders_result=[])
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnisse = await okx_demo.lese_offene_algo_orders(_credential(), "BTC/USDC")
+
+    assert ergebnisse == []
+
+
+async def test_lese_offene_algo_orders_unerwartetes_format_wirft(monkeypatch):
+    fake = FakeOkxClient(fetch_open_orders_result=[{"id": "algo-1"}])  # ohne Pflichtfelder
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoAntwortFehler):
+        await okx_demo.lese_offene_algo_orders(_credential(), "BTC/USDC")
+
+
+async def test_lese_offene_algo_orders_timeout_wirft(monkeypatch):
+    fake = FakeOkxClient(fetch_open_orders_exc=ccxt.RequestTimeout("kein Pong"))
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoTimeout):
+        await okx_demo.lese_offene_algo_orders(_credential(), "BTC/USDC")
+
+
+# --- storniere_algo_order ------------------------------------------------------------
+
+
+async def test_storniere_algo_order_erfolg(monkeypatch):
+    fake = FakeOkxClient(cancel_order_result={"id": "algo-1"})
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    storno_id = await okx_demo.storniere_algo_order(_credential(), "algo-1", "BTC/USDC")
+
+    assert storno_id == "algo-1"
+    assert fake.cancel_order_calls == [("algo-1", "BTC/USDC", {"trigger": True})]
+    assert fake.closed is True
+
+
+async def test_storniere_algo_order_ablehnung(monkeypatch):
+    fake = FakeOkxClient(cancel_order_exc=ccxt.InvalidOrder("unbekannte algoId"))
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoAblehnung):
+        await okx_demo.storniere_algo_order(_credential(), "algo-1", "BTC/USDC")
+
+
+async def test_storniere_algo_order_ohne_id_wirft_antwortfehler(monkeypatch):
+    fake = FakeOkxClient(cancel_order_result={"status": "ok"})
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoAntwortFehler):
+        await okx_demo.storniere_algo_order(_credential(), "algo-1", "BTC/USDC")
