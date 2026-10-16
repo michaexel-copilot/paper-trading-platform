@@ -28,6 +28,8 @@ async def buche_fill(
     quantity: Decimal,
     fx_rate: Decimal,
     result: "Amounts",
+    *,
+    zeile_behalten: bool = False,
 ) -> Decimal:
     """Book one fill's Position/avg_cost and Portfolio cash/fees/realized_pnl.
 
@@ -35,6 +37,14 @@ async def buche_fill(
     concurrency safety, locked with ``with_for_update()``) by the caller -- this
     function does not load or lock it itself, same as the original code it was
     extracted from. Returns the realized P&L of this fill (zero for a buy).
+
+    ``zeile_behalten`` (HED-147, Festlegung N-3): default unverändert löscht die
+    ``Position``-Zeile bei ``quantity == 0`` (Verhalten des Dashboard-Matchers und
+    der Einstiegsbuchung aus HED-109). Ein Exit-Aufrufer, der die gesamte Position
+    schließt, setzt dies auf ``True`` -- sonst würde eine gelöschte Zeile von
+    ``app.trading.stop_pflicht._position_noch_offen`` (bewusst fail-closed: "keine
+    Zeile -> Position gilt als offen") fälschlich als weiterhin offen gelesen und
+    der zugehörige Pflicht-Stop nie abgeräumt.
     """
     position = await session.scalar(
         select(Position).where(Position.portfolio_id == portfolio.id, Position.asset_id == asset_id)
@@ -56,7 +66,7 @@ async def buche_fill(
     else:
         realized = result.value_base - round_money(position.avg_cost * quantity)
         position.quantity = held - quantity
-        if position.quantity == 0:
+        if position.quantity == 0 and not zeile_behalten:
             await session.delete(position)
 
     portfolio.cash += result.cash_change
