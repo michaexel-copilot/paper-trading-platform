@@ -45,6 +45,13 @@ class StopOrderBuch(Base, BetriebsartMixin):
     zustand: Mapped[str] = mapped_column(String(20), default="offen", index=True)
     ersetzt_durch_id: Mapped[int | None] = mapped_column()
 
+    # HED-147 (Entwurf Abschnitt 4.3, Festlegung N-7): bereits gebuchte Fill-Menge
+    # dieses Stops -- ohne dieses Delta-Feld würde jeder Durchlauf der
+    # Exit-Fill-Erkennung eine bereits gebuchte Teilfüllung erneut buchen.
+    # Nullable wie alle neuen Spalten aus diesem Issue (Festlegung N-6); Default 0
+    # über Migration (server_default) und ORM-Default gleichermaßen.
+    gefuellte_menge_gebucht: Mapped[Decimal | None] = mapped_column(Money, default=Decimal(0))
+
     erstellt_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     beendet_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
 

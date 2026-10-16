@@ -24,7 +24,7 @@ from app.notify import notify_new_proposal
 from app.schluessel import pruefe_schluesseltrennung_beim_start
 from app.schluesseltrennung_laufend import pruefe_einmal as pruefe_schluesseltrennung_einmal
 from app.startgatter import pruefe_installation_marker, pruefe_matcher_fuer_live_artefakt
-from app.trading import stop_orderbuch_abgleich, stop_pflicht, versand_treiber
+from app.trading import exit_fill_erkennung, stop_orderbuch_abgleich, stop_pflicht, versand_treiber
 from app.trading.matcher import Matcher, ProcessLock
 from app.trading.proposals import FRISTWAECHTER_INTERVAL_SECONDS, verfalle_ueberfaellige_vorschlaege
 from app.trading.stufe2 import baue_versandengpass
@@ -121,6 +121,21 @@ async def _stop_pflicht_loop(
             )
         except Exception:
             log.exception("Fill-Erkennung/Pflicht-Stop-Platzierung fehlgeschlagen")
+        await asyncio.sleep(interval_seconds)
+
+
+async def _exit_fill_loop(
+    session_factory, engpass: Versandengpass, market: MarketService, interval_seconds: int
+) -> None:
+    """HED-147 (Entwurf Abschnitt 4.6): Exit-Fill-Erkennung (Stop-/``auto_exit``-
+    Schließungen) in einem eigenen Durchlauf, getrennt von ``_stop_pflicht_loop`` --
+    eine fehlschlagende Pflicht-Stop-Platzierung darf die Exit-Erkennung nicht
+    mitreißen (siehe Moduldokumentation von ``app.trading.exit_fill_erkennung``)."""
+    while True:
+        try:
+            await exit_fill_erkennung.pruefe_exit_fills_einmal(session_factory, engpass, market)
+        except Exception:
+            log.exception("Exit-Fill-Erkennung fehlgeschlagen")
         await asyncio.sleep(interval_seconds)
 
 
@@ -272,6 +287,16 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
                         settings.stop_orderbuch_abgleich_intervall_sekunden,
                         mengen_toleranz,
                         totmannfrist,
+                    )
+                )
+            )
+            background.append(
+                asyncio.create_task(
+                    _exit_fill_loop(
+                        session_factory,
+                        engpass,
+                        service,
+                        settings.exit_fill_intervall_sekunden,
                     )
                 )
             )

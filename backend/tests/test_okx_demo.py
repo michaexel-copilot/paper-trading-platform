@@ -55,6 +55,8 @@ class FakeOkxClient:
         account_balance_exc=None,
         fetch_order_result=None,
         fetch_order_exc=None,
+        fetch_order_results=None,
+        fetch_order_excs=None,
         fetch_open_orders_result=None,
         fetch_open_orders_exc=None,
         cancel_order_result=None,
@@ -66,6 +68,13 @@ class FakeOkxClient:
         self._account_balance_exc = account_balance_exc
         self._fetch_order_result = fetch_order_result
         self._fetch_order_exc = fetch_order_exc
+        # HED-147/HED-150: der zweistufige Algo-Order-Lookup ruft ``fetch_order``
+        # zweimal mit unterschiedlichen Order-Ids auf -- diese beiden Listen liefern
+        # je Aufruf (in Reihenfolge) eine eigene Antwort/Ausnahme, ohne das einfache
+        # Verhalten von ``fetch_order_result``/``fetch_order_exc`` für die
+        # bestehenden einstufigen Tests zu verändern.
+        self._fetch_order_results = list(fetch_order_results or [])
+        self._fetch_order_excs = list(fetch_order_excs or [])
         self._fetch_open_orders_result = fetch_open_orders_result
         self._fetch_open_orders_exc = fetch_open_orders_exc
         self._cancel_order_result = cancel_order_result
@@ -93,10 +102,16 @@ class FakeOkxClient:
             raise self._account_balance_exc
         return self._account_balance_result
 
-    async def fetch_order(self, order_id, symbol):
-        self.fetch_order_calls.append((order_id, symbol))
-        if self._fetch_order_exc:
+    async def fetch_order(self, order_id, symbol, params=None):
+        self.fetch_order_calls.append((order_id, symbol, params or {}))
+        if self._fetch_order_excs:
+            exc = self._fetch_order_excs.pop(0)
+            if exc is not None:
+                raise exc
+        elif self._fetch_order_exc:
             raise self._fetch_order_exc
+        if self._fetch_order_results:
+            return self._fetch_order_results.pop(0)
         return self._fetch_order_result
 
     async def fetch_open_orders(self, symbol, params=None):
@@ -385,7 +400,7 @@ async def test_lese_order_status_vollstaendig_gefuellt(monkeypatch):
 
     assert ergebnis.status == "gefuellt"
     assert ergebnis.gefuellte_menge == Decimal("0.5")
-    assert fake.fetch_order_calls == [("order-1", "BTC/USDC")]
+    assert fake.fetch_order_calls == [("order-1", "BTC/USDC", {})]
     assert fake.closed is True
 
 
@@ -436,6 +451,159 @@ async def test_lese_order_status_timeout_wirft(monkeypatch):
 
     with pytest.raises(okx_demo.OkxDemoTimeout):
         await okx_demo.lese_order_status(_credential(), "order-1", "BTC/USDC")
+
+
+# --- HED-147: Preisfeld in lese_order_status (Teilaufgabe B, normale Order) --------
+
+
+async def test_lese_order_status_liefert_durchschnittspreis_wenn_vorhanden(monkeypatch):
+    """Nachtrag-Handprobe HED-147 Abschnitt 2 Punkt 4: für eine gewöhnliche
+    (nicht-Algo) Order liefert ccxt ``average`` bereits in der ersten Antwort."""
+    fake = FakeOkxClient(
+        fetch_order_result={
+            "status": "closed", "filled": "0.01", "remaining": "0", "average": "81641.0",
+        }
+    )
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnis = await okx_demo.lese_order_status(_credential(), "order-1", "BTC/USDC")
+
+    assert ergebnis.durchschnittspreis == Decimal("81641.0")
+
+
+async def test_lese_order_status_ohne_preisfeld_ist_durchschnittspreis_none(monkeypatch):
+    fake = FakeOkxClient(fetch_order_result={"status": "open", "filled": "0", "remaining": "1"})
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnis = await okx_demo.lese_order_status(_credential(), "order-1", "BTC/USDC")
+
+    assert ergebnis.durchschnittspreis is None
+
+
+async def test_lese_order_status_mit_nicht_positivem_preis_ist_durchschnittspreis_none(
+    monkeypatch,
+):
+    fake = FakeOkxClient(
+        fetch_order_result={"status": "closed", "filled": "0.01", "remaining": "0", "average": "0"}
+    )
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnis = await okx_demo.lese_order_status(_credential(), "order-1", "BTC/USDC")
+
+    assert ergebnis.durchschnittspreis is None
+
+
+# --- HED-147/HED-150: lese_algo_order_status (Teilaufgabe A, Stop-Order, Weg 3) ----
+
+
+_ALGO_GEFUELLT_ANTWORT = {
+    "status": "closed",
+    "filled": "0.001",
+    "remaining": "0",
+    "lastUpdateTimestamp": 1700000000000,
+    "info": {"state": "effective", "ordId": "normal-order-1", "ordIdList": ["normal-order-1"]},
+}
+_FOLGE_ANTWORT_MIT_PREIS = {
+    "status": "closed", "filled": "0.001", "average": "81641.0",
+}
+
+
+async def test_lese_algo_order_status_erfolg_zweistufiger_lookup(monkeypatch):
+    fake = FakeOkxClient(
+        fetch_order_results=[_ALGO_GEFUELLT_ANTWORT, _FOLGE_ANTWORT_MIT_PREIS]
+    )
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnis = await okx_demo.lese_algo_order_status(_credential(), "algo-1", "BTC/USDC")
+
+    assert ergebnis.status == "gefuellt"
+    assert ergebnis.gefuellte_menge == Decimal("0.001")
+    assert ergebnis.durchschnittspreis == Decimal("81641.0")
+    assert fake.fetch_order_calls == [
+        ("algo-1", "BTC/USDC", {"trigger": True}),
+        ("normal-order-1", "BTC/USDC", {}),
+    ]
+    assert fake.closed is True
+
+
+async def test_lese_algo_order_status_ohne_fuellung_fragt_nicht_zweites_mal_ab(monkeypatch):
+    fake = FakeOkxClient(
+        fetch_order_result={"status": "open", "filled": "0", "remaining": "0.001"}
+    )
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnis = await okx_demo.lese_algo_order_status(_credential(), "algo-1", "BTC/USDC")
+
+    assert ergebnis.status == "offen"
+    assert ergebnis.durchschnittspreis is None
+    assert len(fake.fetch_order_calls) == 1
+
+
+async def test_lese_algo_order_status_erste_abfrage_timeout_wirft(monkeypatch):
+    fake = FakeOkxClient(fetch_order_exc=ccxt.RequestTimeout("kein Pong"))
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoTimeout):
+        await okx_demo.lese_algo_order_status(_credential(), "algo-1", "BTC/USDC")
+    assert fake.closed is True
+
+
+@pytest.mark.parametrize(
+    "ord_id_list",
+    [[], ["a", "b"], None, "nicht-eine-liste"],
+)
+async def test_lese_algo_order_status_ordidlist_nicht_genau_ein_eintrag_ist_fail_closed(
+    monkeypatch, ord_id_list
+):
+    """HED-150 Auflage 4: fail-closed für JEDEN Wert ungleich genau einem Eintrag."""
+    antwort = dict(_ALGO_GEFUELLT_ANTWORT)
+    antwort["info"] = {"ordIdList": ord_id_list}
+    fake = FakeOkxClient(fetch_order_results=[antwort])
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoAntwortFehler):
+        await okx_demo.lese_algo_order_status(_credential(), "algo-1", "BTC/USDC")
+    assert fake.closed is True
+
+
+async def test_lese_algo_order_status_zweite_abfrage_ohne_preis_ist_fail_closed(monkeypatch):
+    fake = FakeOkxClient(
+        fetch_order_results=[_ALGO_GEFUELLT_ANTWORT, {"status": "closed", "filled": "0.001"}]
+    )
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoAntwortFehler):
+        await okx_demo.lese_algo_order_status(_credential(), "algo-1", "BTC/USDC")
+
+
+async def test_lese_algo_order_status_zweite_abfrage_timeout_wirft(monkeypatch):
+    fake = FakeOkxClient(
+        fetch_order_results=[_ALGO_GEFUELLT_ANTWORT],
+        fetch_order_excs=[None, ccxt.RequestTimeout("kein Pong")],
+    )
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    with pytest.raises(okx_demo.OkxDemoTimeout):
+        await okx_demo.lese_algo_order_status(_credential(), "algo-1", "BTC/USDC")
+    assert fake.closed is True
+
+
+async def test_lese_algo_order_status_teilgefuellt_fragt_preis_trotzdem_ab(monkeypatch):
+    """gefuellte_menge > 0 ist das Kriterium für den zweiten Lookup, nicht der
+    Endzustand -- auch eine (noch offene) Teilfüllung hat bereits einen Fill-Preis."""
+    antwort = {
+        "status": "open",
+        "filled": "0.0005",
+        "remaining": "0.0005",
+        "info": {"ordIdList": ["normal-order-1"]},
+    }
+    fake = FakeOkxClient(fetch_order_results=[antwort, _FOLGE_ANTWORT_MIT_PREIS])
+    monkeypatch.setattr(okx_demo, "_client", lambda credential: fake)
+
+    ergebnis = await okx_demo.lese_algo_order_status(_credential(), "algo-1", "BTC/USDC")
+
+    assert ergebnis.status == "teilgefuellt"
+    assert ergebnis.durchschnittspreis == Decimal("81641.0")
 
 
 async def test_lese_order_status_unbekannter_status_wirft_antwortfehler(monkeypatch):

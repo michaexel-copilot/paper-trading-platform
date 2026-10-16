@@ -91,15 +91,24 @@ class KontostandErgebnis:
 
 @dataclass(frozen=True)
 class OrderStatusErgebnis:
-    """B-12 (HED-84, Entwurf Abschnitt 12.1): Rückgabe von ``lese_order_status``.
-    Bewusst ohne Preisfeld -- der Stop-Kurs stammt aus dem freigegebenen Vorschlag
-    (``Proposal.stop_price``), nicht von der Börse (Entwurf Abschnitt 6.3)."""
+    """B-12 (HED-84, Entwurf Abschnitt 12.1): Rückgabe von ``lese_order_status``/
+    ``lese_algo_order_status``.
+
+    ``durchschnittspreis`` (HED-147/HED-150, ersetzt die ursprüngliche Festlegung
+    N-9 aus dem HED-147-Entwurf): der tatsächliche Fill-Preis, nur gesetzt, wenn
+    ``gefuellte_menge > 0`` UND die Gegenstelle einen positiven Preis geliefert hat.
+    Für die Einstiegsseite (B-12, Entwurf Abschnitt 6.3) bleibt die ursprüngliche
+    Begründung gültig -- der Stop-Kurs einer Einstiegs-Order stammt aus dem
+    freigegebenen Vorschlag (``Proposal.stop_price``), nicht von der Börse; dieses
+    Feld wird dort schlicht nicht gelesen. Für Exit-Fills (HED-147) ist es
+    zwingend: ohne tatsächlichen Fill-Preis wird nicht gebucht (Festlegung N-10)."""
 
     quelle: str
     status: str  # offen | teilgefuellt | gefuellt | beendet | abgelehnt
     gefuellte_menge: Decimal
     restmenge: Decimal
     zeitstempel: datetime
+    durchschnittspreis: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -295,6 +304,131 @@ async def lese_order_status(
         gefuellte_menge=gefuellte_menge,
         restmenge=restmenge,
         zeitstempel=_zeitstempel_aus_ms(antwort.get("lastUpdateTimestamp")),
+        durchschnittspreis=_positiver_preis(antwort.get("average")),
+    )
+
+
+def _positiver_preis(roh_wert) -> Decimal | None:
+    """HED-147/HED-150: ``average`` nur als Preis werten, wenn vorhanden und > 0 --
+    dieselbe Fail-Closed-Linie wie überall sonst in diesem Modul (kein Ersatzwert)."""
+    if roh_wert is None:
+        return None
+    kandidat = Decimal(str(roh_wert))
+    return kandidat if kandidat > 0 else None
+
+
+async def lese_algo_order_status(
+    credential: ExchangeCredential, algo_id: str, symbol: str
+) -> OrderStatusErgebnis:
+    """Reiner Lesevorgang für eine OKX-Algo-Order (Stop-Order), HED-147/HED-150.
+
+    OKX trennt Algo- und normale Order-Namensräume. Eine ausgelöste Algo-Order
+    liefert selbst keinen Fill-Preis -- ``info.actualPx`` bleibt auch bei
+    vollständigem Fill leer (keine ccxt-Lücke, empirisch mit ccxt 4.5.88 gegen
+    OKX-Demo verifiziert, Nachtrag auf HED-147). Der tatsächliche Fill-Preis ist nur
+    über die aus ``info.ordId`` verlinkte normale Order abrufbar (CRO-Abnahme
+    HED-150, "Weg 3"):
+
+    1. Status/Füllmenge über die Algo-Order-Id (``params={"trigger": True}``).
+    2. Nur bei Füllung (``gefuellte_menge > 0``): die verlinkte normale Order-Id aus
+       dem rohen ``info``-Dict lesen (HED-150 Auflage 3 -- erstmaliger Zugriff auf
+       rohe *Ausgabe*-Felder statt nur vereinheitlichter ccxt-Felder) und ein
+       zweites Mal abfragen, für den tatsächlichen Preis.
+
+    Jeder Fehler in Schritt 2 (Timeout/Ablehnung/fehlendes oder nicht-positives
+    Preisfeld/``info.ordIdList`` ungleich genau ein Eintrag) lässt den gesamten
+    Lesevorgang fehlschlagen (HED-150 Auflage 2/4) -- derselbe Fail-Closed-Charakter
+    wie ein fehlender Preis in einer einstufigen Abfrage: kein Ersatzwert, kein
+    Trigger-Kurs, nächster Durchlauf.
+    """
+    client = _client(credential)
+    try:
+        try:
+            antwort = await client.fetch_order(algo_id, symbol, params={"trigger": True})
+        except ccxt.RequestTimeout as exc:
+            raise OkxDemoTimeout(
+                f"OKX-Demo antwortet nicht auf Algo-Order-Status-Abfrage "
+                f"{symbol}/{algo_id}: {exc}"
+            ) from exc
+        except ccxt.BaseError as exc:
+            raise OkxDemoAblehnung(
+                f"OKX-Demo lehnt Algo-Order-Status-Abfrage ab ({symbol}/{algo_id}): {exc}"
+            ) from exc
+        if not isinstance(antwort, dict):
+            raise OkxDemoAntwortFehler(
+                f"Unerwartetes Algo-Order-Status-Format von OKX-Demo: {antwort!r}"
+            )
+        roh_status = antwort.get("status")
+        roh_gefuellt = antwort.get("filled")
+        if roh_status is None or roh_gefuellt is None:
+            raise OkxDemoAntwortFehler(
+                f"Unerwartetes Algo-Order-Status-Format von OKX-Demo: {antwort!r}"
+            )
+        gefuellte_menge = Decimal(str(roh_gefuellt))
+        roh_rest = antwort.get("remaining")
+        restmenge = Decimal(str(roh_rest)) if roh_rest is not None else Decimal(0)
+        status = _normalisiere_order_status(roh_status, gefuellte_menge, restmenge)
+        zeitstempel = _zeitstempel_aus_ms(antwort.get("lastUpdateTimestamp"))
+
+        durchschnittspreis: Decimal | None = None
+        if gefuellte_menge > 0:
+            # HED-150 Auflage 3: erstmaliger Zugriff auf das rohe ``info``-Dict einer
+            # ccxt-Antwort (nicht nur vereinheitlichte Felder) -- OKX/ccxt
+            # vereinheitlichen die Algo->Order-Verlinkung nicht. ``info`` ist
+            # das unveränderte Rohdaten-Dict, das ccxt für OKX immer mitliefert.
+            # Kann bei einem ccxt-Versionswechsel unbemerkt kippen, siehe HED-150.
+            roh_info = antwort.get("info")
+            ord_id_list = roh_info.get("ordIdList") if isinstance(roh_info, dict) else None
+            if not isinstance(ord_id_list, list) or len(ord_id_list) != 1 or not ord_id_list[0]:
+                # HED-150 Auflage 4: fail-closed für JEDEN Wert ungleich genau einem
+                # Eintrag (0, >1, fehlendes/nicht parsebares Feld) -- keine
+                # mengengewichtete Mittelung über mehrere verlinkte Order.
+                raise OkxDemoAntwortFehler(
+                    f"OKX-Demo-Algo-Order {algo_id} ({symbol}): info.ordIdList ist "
+                    f"nicht genau ein Eintrag ({(roh_info or {}).get('ordIdList')!r}) "
+                    "-- Fill-Preis nicht ableitbar."
+                )
+            verlinkte_order_id = str(ord_id_list[0])
+            try:
+                fill_antwort = await client.fetch_order(verlinkte_order_id, symbol)
+            except ccxt.RequestTimeout as exc:
+                raise OkxDemoTimeout(
+                    f"OKX-Demo antwortet nicht auf Fill-Preis-Abfrage der verlinkten "
+                    f"Order {symbol}/{verlinkte_order_id} (Algo-Order {algo_id}): {exc}"
+                ) from exc
+            except ccxt.BaseError as exc:
+                raise OkxDemoAblehnung(
+                    f"OKX-Demo lehnt Fill-Preis-Abfrage der verlinkten Order ab "
+                    f"({symbol}/{verlinkte_order_id}, Algo-Order {algo_id}): {exc}"
+                ) from exc
+            if not isinstance(fill_antwort, dict):
+                raise OkxDemoAntwortFehler(
+                    "Unerwartetes Format der Fill-Preis-Antwort von OKX-Demo: "
+                    f"{fill_antwort!r}"
+                )
+            # HED-150 Auflage 5: das vereinheitlichte ``id``-Feld dieser zweiten
+            # Antwort wird NICHT zum Abgleich benutzt -- ccxt setzt es für
+            # OKX-Algo-Verlinkungen überraschend auf die Algo-Order-Id zurück, nicht
+            # auf die hier angefragte normale Order-Id (empirisch verifiziert, kann
+            # bei einem ccxt-Versionswechsel unbemerkt kippen). Die angefragte Id
+            # (``verlinkte_order_id``) wird nur zur Protokollierung verwendet.
+            durchschnittspreis = _positiver_preis(fill_antwort.get("average"))
+            if durchschnittspreis is None:
+                raise OkxDemoAntwortFehler(
+                    f"OKX-Demo-Fill-Preis-Antwort für verlinkte Order "
+                    f"{verlinkte_order_id} ({symbol}) ohne positives Preisfeld: "
+                    f"{fill_antwort!r}"
+                )
+    finally:
+        await client.close()
+
+    return OrderStatusErgebnis(
+        quelle=QUELLE,
+        status=status,
+        gefuellte_menge=gefuellte_menge,
+        restmenge=restmenge,
+        zeitstempel=zeitstempel,
+        durchschnittspreis=durchschnittspreis,
     )
 
 

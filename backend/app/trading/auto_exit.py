@@ -242,6 +242,13 @@ async def fuehre_automatischen_ausstieg_aus(
             escalation_recipients=None,
             escalation_deadline=None,
             escalation_result=None,
+            # HED-147: nur beim tatsächlichen Versand (Zweig "versandt" unten)
+            # gesetzt -- ohne Gegenstellen-Order-Id ist der Fill-Status nicht
+            # abfragbar, jeder andere Ergebnis-Zweig sendet nie an die Gegenstelle.
+            gegenstellen_order_id=None,
+            exchange=None,
+            boersensymbol=None,
+            gefuellte_menge_gebucht=Decimal(0),
         )
         basis.update(felder)
         return AutoExitLogEntry(**basis)
@@ -429,6 +436,11 @@ async def fuehre_automatischen_ausstieg_aus(
         price_source_timestamp=price_source_timestamp,
         size_was_capped=size_was_capped,
         size_capped_to=exit_size if size_was_capped else None,
+        # HED-147: ohne diese drei Felder ist der Fill-Status dieser Order später
+        # nicht abfragbar (Entwurf Abschnitt 4.2, Teilaufgabe B).
+        gegenstellen_order_id=ergebnis.gegenstellen_order_id,
+        exchange=signal.exchange,
+        boersensymbol=signal.symbol,
     )
     session.add(eintrag)
     await session.commit()
