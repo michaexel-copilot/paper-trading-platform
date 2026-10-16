@@ -8,7 +8,7 @@ genug, um die Fenster-Geometrie und die Kostenweitergabe nachzuweisen.
 
 import pandas as pd
 import pytest
-from backtesting import Strategy
+from backtesting import Backtest, Strategy
 
 from app.backtest_costs import cost_model_for
 from app.backtest_walkforward import (
@@ -177,6 +177,29 @@ def test_run_walk_forward_charges_the_cost_model_on_every_window():
     for with_window, without_window in zip(with_costs.windows, without_costs.windows, strict=True):
         if with_window.trade_count > 0:
             assert with_window.pnl < without_window.pnl
+
+
+def test_finalize_trades_changes_the_exact_trade_count_by_the_one_position_left_open():
+    """Nachforderung der CRO-Abnahme (HED-133): die Begründung für
+    `finalize_trades=True` in `run_walk_forward`/`run_final_holdout` (Kommentar dort)
+    beweist mit einer exakten Zahl, nicht nur einem Verhalten, dass genau die am
+    Fensterende offene Position den Unterschied macht -- nicht mehr, nicht weniger."""
+    test_df = _zigzag_ohlcv(5)
+    model = cost_model_for("BTC/USDC")
+    kwargs = dict(cash=10_000.0, commission=model.commission, spread=model.backtesting_spread_param)
+
+    left_open = Backtest(test_df, _DailyFlip, finalize_trades=False, **kwargs).run()
+    force_closed = Backtest(test_df, _DailyFlip, finalize_trades=True, **kwargs).run()
+
+    assert int(force_closed["# Trades"]) == int(left_open["# Trades"]) + 1
+
+    # run_walk_forward erzwingt intern finalize_trades=True -- dieselbe Zahl, nicht die
+    # von finalize_trades=False.
+    full_frame = _zigzag_ohlcv(30)
+    spec = WindowSpec(n_windows=4, train_bars=10, test_bars=5)
+    result = run_walk_forward(full_frame, _DailyFlip, model, spec)
+    assert result.windows[0].trade_count == int(force_closed["# Trades"])
+    assert result.windows[0].trade_count != int(left_open["# Trades"])
 
 
 def test_run_walk_forward_calls_fit_on_the_training_slice_of_each_window():
