@@ -104,15 +104,20 @@ async def _versand_treiber_loop(
 
 
 async def _stop_pflicht_loop(
-    session_factory, engpass: Versandengpass, interval_seconds: int, pflicht_stop_nachfrist
+    session_factory,
+    engpass: Versandengpass,
+    market: MarketService,
+    interval_seconds: int,
+    pflicht_stop_nachfrist,
 ) -> None:
     """B-12 (Entwurf Abschnitt 6.1): Fill-Erkennung und Pflicht-Stop-Platzierung in
     einem gemeinsamen Durchlauf -- siehe Moduldokumentation von
-    ``app.trading.stop_pflicht``."""
+    ``app.trading.stop_pflicht``. ``market`` wird seit HED-109 für die Fill-Buchung
+    gebraucht (Preis-/Gebührenkonvertierung über ``pricing_for``)."""
     while True:
         try:
             await stop_pflicht.pruefe_fills_einmal(
-                session_factory, engpass, pflicht_stop_nachfrist=pflicht_stop_nachfrist
+                session_factory, engpass, market, pflicht_stop_nachfrist=pflicht_stop_nachfrist
             )
         except Exception:
             log.exception("Fill-Erkennung/Pflicht-Stop-Platzierung fehlgeschlagen")
@@ -253,6 +258,7 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
                     _stop_pflicht_loop(
                         session_factory,
                         engpass,
+                        service,
                         settings.stop_pflicht_intervall_sekunden,
                         pflicht_stop_nachfrist,
                     )

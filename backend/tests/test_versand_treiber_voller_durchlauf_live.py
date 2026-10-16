@@ -33,7 +33,7 @@ from sqlalchemy import select
 
 from app.betriebsart import Betriebsart
 from app.dbtypes import utcnow
-from app.models import Portfolio, Strategy
+from app.models import Portfolio, Position, Strategy
 from app.models.proposals import (
     STATE_BOARD_FREIGEGEBEN,
     STATE_GEFUELLT,
@@ -51,7 +51,7 @@ from app.trading.stop_pflicht import pruefe_fills_einmal
 from app.trading.stufe2 import pruefe_freigabe_nachweis
 from app.trading.versand_treiber import treibe_einmal
 from app.trading.versandengpass import Versandengpass, VersandOrder
-from tests.conftest import create_portfolio
+from tests.conftest import asset_id, create_portfolio
 
 SYMBOL = "BTC/USDC"
 NICHT_AUSLOESENDER_STOP = Decimal("40000")
@@ -164,7 +164,7 @@ async def _freigegebener_einstieg(session, strategy, *, limit_price, stop_price,
 
 @pytest.mark.live
 async def test_p17_voller_durchlauf_einstieg_fill_stop_abgleich(
-    mit_echtem_demo_schluessel, session, session_factory, strategy
+    mit_echtem_demo_schluessel, session, session_factory, market, prices, strategy, portfolio
 ):
     """P-17, Abbruchkriterium: Limit-Einstieg knapp über dem Markt platzieren (echte
     OKX-Demo-Order), auf Füllung warten, Fill-Erkennung (Z10->Z11), automatische
@@ -202,7 +202,7 @@ async def test_p17_voller_durchlauf_einstieg_fill_stop_abgleich(
 
         for _ in range(10):
             await pruefe_fills_einmal(
-                session_factory, engpass, pflicht_stop_nachfrist=PFLICHT_STOP_NACHFRIST
+                session_factory, engpass, market, pflicht_stop_nachfrist=PFLICHT_STOP_NACHFRIST
             )
             await session.refresh(proposal)
             if proposal.state == STATE_GEFUELLT:
@@ -214,6 +214,17 @@ async def test_p17_voller_durchlauf_einstieg_fill_stop_abgleich(
         )
         gefuellte_menge_final = proposal.gefuellte_menge
         assert gefuellte_menge_final == MENGE
+
+        # HED-109: Fill-Erkennung bucht den Einstieg jetzt auch in Position --
+        # bisher (vor HED-109) blieb diese Zeile für die Proposal-Pipeline leer.
+        btc_id = await asset_id(session, "BTC")
+        position = await session.scalar(
+            select(Position).where(
+                Position.portfolio_id == portfolio.id, Position.asset_id == btc_id
+            )
+        )
+        assert position is not None, "HED-109: Fill wurde nicht in Position gebucht"
+        assert position.quantity == MENGE
 
         stop_zeile = await session.scalar(
             select(StopOrderBuch).where(StopOrderBuch.anlass_proposal_id == proposal.id)
