@@ -3,8 +3,13 @@ AutoExitLogEntry
 
 HED-147, Entwurf Abschnitt 4.3, CRO-Abnahme HED-148/HED-150.
 
+down_revision zeigt auf die Merge-Revision 858dd4e03635 (HED-153 Auflage 1,
+B-11/B-12-Koepfe zusammengefuehrt), nicht mehr direkt auf a1b2c3d4e5f6 --
+sonst entstuende durch diese Revision erneut ein zweiter Kopf neben
+858dd4e03635.
+
 Revision ID: c3e1f9a04d2b
-Revises: a1b2c3d4e5f6
+Revises: 858dd4e03635
 Create Date: 2026-10-16 22:00:00.000000
 
 """
@@ -18,7 +23,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c3e1f9a04d2b"
-down_revision: str | Sequence[str] | None = "a1b2c3d4e5f6"
+down_revision: str | Sequence[str] | None = "858dd4e03635"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
