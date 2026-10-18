@@ -7,16 +7,16 @@ separate from the trading database. It must stay that way: a backtest data
 path has no business importing anything from ``app.trading`` or ``app.models``.
 
 Why this does not reuse ``app.marketdata.ccxt_adapter.CcxtSource.fetch_ohlcv``
-for the initial fetch: that method pages forward from ``since`` but gives up
-the moment one page comes back empty (see its ``for _ in range(...): ... if
-not new: break``). That is fine for the live/paper app, which only ever asks
-for a few years of recent history for an asset that is already trading. It is
-wrong for a backtest, which must walk forward from a date before *any* OKX
-listing to find out where an instrument's history actually starts. Starting
-too early must not be mistaken for "no history exists" -- it must skip
-forward past the empty window and keep looking. ``_collect`` below does that.
-This is a reusable building block, not a one-off hack: the discovery loop and
-the gap scan share one pass over the same merged series.
+for the initial fetch: besides the layering constraint above, that method is
+sized for a live/paper request a user is waiting on synchronously -- a few
+years of recent history for an asset that is already trading, bounded by a
+small empty-window probe budget (HED-123, HED-139). A backtest instead walks
+forward from a date before *any* OKX listing to find out where an
+instrument's history actually starts, which can take far more empty probes
+before the real data begins. ``_collect`` below uses its own, much larger
+budgets for exactly that reason. This is a reusable building block, not a
+one-off hack: the discovery loop and the gap scan share one pass over the
+same merged series.
 """
 
 from __future__ import annotations
@@ -219,10 +219,11 @@ async def _collect(
             symbol, timeframe, int(cursor.timestamp() * 1000), page_limit
         )
         if not page:
-            # No data in this window. Unlike the live/paper adapter, do not
-            # give up here -- this is exactly what happens when `since` is
-            # before the instrument was first listed. Skip past the window
-            # and keep looking.
+            # No data in this window -- this is exactly what happens when
+            # `since` is before the instrument was first listed. Skip past
+            # the window and keep looking; the empty-window budget here is
+            # far larger than the live/paper adapter's (HED-139), since a
+            # backtest has no user waiting synchronously on the result.
             empty_windows += 1
             if empty_windows > max_empty_windows:
                 break
