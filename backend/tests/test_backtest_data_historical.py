@@ -13,14 +13,16 @@ import pytest
 import app.backtest_data.historical as historical
 from app.backtest_data.historical import (
     EARLIEST_SINCE,
+    MAX_INTRADAY_RANGE_RATIO,
     OKX_RATE_LIMIT_MS,
     Gap,
     HistoryCache,
     find_gaps,
+    implausibility_reason,
     refresh,
     to_frame,
 )
-from app.marketdata.base import Bar, NotListed
+from app.marketdata.base import Bar, NotListed, to_decimal
 
 
 def bar(day_offset: int, start: datetime, price: float = 100.0) -> Bar:
@@ -173,6 +175,87 @@ def test_to_frame_has_the_shape_a_backtest_engine_expects():
     assert str(frame.index.tz) == "UTC"
     assert frame.iloc[0]["Close"] == 100.0
     assert frame.iloc[1]["Close"] == 101.0
+
+
+# --- HED-155: price plausibility filter ----------------------------------------------
+#
+# Fixture values are the real OKX artifact found on HED-131 (bisection on BTC/USDT and
+# ETH/USDT, 2017-10-10): a single placeholder candle with open=1, low=1 USD, while
+# close already sits at the real traded level.
+
+_2017_10_10_MS = int(datetime(2017, 10, 10, tzinfo=UTC).timestamp() * 1000)
+BTC_USDT_ARTIFACT_2017_10_10 = (_2017_10_10_MS, 1.0, 1.0, 1.0, 4901.0, 19.26)
+ETH_USDT_ARTIFACT_2017_10_10 = (_2017_10_10_MS, 1.0, 1.0, 1.0, 300.0, 260.8)
+
+
+def test_implausibility_reason_flags_the_known_btc_usdt_artifact():
+    reason = implausibility_reason(*(to_decimal(v) for v in (1, 1, 1, 4901)))
+
+    assert reason is not None
+    assert "4901" in reason
+
+
+def test_implausibility_reason_flags_the_known_eth_usdt_artifact():
+    reason = implausibility_reason(*(to_decimal(v) for v in (1, 1, 1, 300)))
+
+    assert reason is not None
+
+
+def test_implausibility_reason_accepts_an_ordinary_trading_day():
+    reason = implausibility_reason(*(to_decimal(v) for v in (100, 101, 99, 100)))
+
+    assert reason is None
+
+
+def test_implausibility_reason_accepts_a_violent_but_real_looking_day_at_the_threshold():
+    # Just inside MAX_INTRADAY_RANGE_RATIO (20x): a bad day, not an artifact.
+    low = Decimal("10")
+    high = low * MAX_INTRADAY_RANGE_RATIO - Decimal("0.01")
+
+    reason = implausibility_reason(low, high, low, high)
+
+    assert reason is None
+
+
+def test_implausibility_reason_rejects_a_non_positive_price():
+    reason = implausibility_reason(*(to_decimal(v) for v in (0, 1, 0, 1)))
+
+    assert reason is not None
+
+
+def test_rows_to_bars_drops_the_artifact_candle_but_keeps_it_visible():
+    real_next_day_ms = int(datetime(2017, 10, 11, tzinfo=UTC).timestamp() * 1000)
+    real_next_day = (real_next_day_ms, 4901.0, 5100.0, 4850.0, 4950.0, 1000.0)
+    rows = {
+        BTC_USDT_ARTIFACT_2017_10_10[0]: list(BTC_USDT_ARTIFACT_2017_10_10),
+        real_next_day[0]: list(real_next_day),
+    }
+
+    bars, implausible = historical._rows_to_bars(rows)
+
+    assert [b.close for b in bars] == [Decimal("4950.0")]
+    assert len(implausible) == 1
+    dropped = implausible[0]
+    assert dropped.open == Decimal("1.0")
+    assert dropped.close == Decimal("4901.0")
+    assert "Intraday-Preisspanne" in dropped.reason
+
+
+async def test_refresh_drops_the_artifact_candle_and_reports_it_in_the_result(tmp_path):
+    listing_start = datetime(2017, 10, 11, tzinfo=UTC)
+    real_bars = [bar(i, listing_start, price=4901.0 + i * 10) for i in range(3)]
+    artifact_row = list(BTC_USDT_ARTIFACT_2017_10_10)
+    artifact_row[0] = int((listing_start - timedelta(days=1)).timestamp() * 1000)
+    rows = [artifact_row, *rows_from(real_bars)]
+    exchange = FakeExchange(SPOT_MARKETS, rows)
+    cache = HistoryCache(tmp_path)
+
+    result = await refresh(cache, "BTC/USDC", "1d", exchange=exchange)
+
+    assert result.bar_count == 3
+    assert result.listing_start == listing_start  # not the artifact day before it
+    assert len(result.implausible_bars) == 1
+    assert result.implausible_bars[0].time == listing_start - timedelta(days=1)
 
 
 # --- refresh(): discovery, caching, gaps, all together -------------------------------
