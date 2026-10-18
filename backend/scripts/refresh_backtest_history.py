@@ -32,10 +32,13 @@ async def main() -> None:
         result = await refresh(cache, symbol, args.timeframe)
         print(
             f"{symbol} {args.timeframe}: {result.bar_count} Balken, "
-            f"Beginn {result.listing_start}, {len(result.gaps)} Lücke(n)"
+            f"Beginn {result.listing_start}, {len(result.gaps)} Lücke(n), "
+            f"{len(result.implausible_bars)} verworfene Platzhalter-Kerze(n)"
         )
         for gap in result.gaps:
             print(f"  Lücke: {gap.after} .. {gap.before} ({gap.missing_bars} fehlend)")
+        for implausible in result.implausible_bars:
+            print(f"  Verworfen ({implausible.time}): {implausible.reason}")
 
 
 if __name__ == "__main__":

@@ -75,6 +75,53 @@ class Gap:
 
 
 @dataclass(frozen=True, slots=True)
+class ImplausibleBar:
+    """A candle OKX returned that ``_rows_to_bars`` rejected as a price artifact.
+
+    HED-155: OKX's public history endpoint has been observed to return a single
+    placeholder candle (e.g. open=1, low=1 USD) at the start of some symbols'
+    history -- not a real trade. Dropped bars are never silently discarded:
+    they are logged and carried here so a CRO/Model Validator reviewing a
+    concrete backtest result can see whether and where filtering happened.
+    """
+
+    time: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal | None
+    reason: str
+
+
+# HED-155: a single daily candle whose high/low span more than this factor is
+# treated as a data artifact, not a real trade. The known artifact (OKX
+# BTC/USDT and ETH/USDT, 2017-10-10: open=1, low=1 USD, close=4901/300 USD)
+# has a ratio in the hundreds to low thousands. Even extreme real single-day
+# crypto moves (e.g. a flash crash wiping out 90% of price) only reach a
+# ratio of about 10, so 20 catches the known artifact class with headroom
+# while not flagging genuine, if violent, trading days.
+MAX_INTRADAY_RANGE_RATIO = Decimal("20")
+
+
+def implausibility_reason(
+    open_: Decimal, high: Decimal, low: Decimal, close: Decimal
+) -> str | None:
+    """Why a candle looks like a data artifact, or ``None`` if it looks like a real trade."""
+    values = (open_, high, low, close)
+    if any(v is None or v <= 0 for v in values):
+        return f"nicht-positiver Preis in OHLC (open={open_} high={high} low={low} close={close})"
+    ratio = max(values) / min(values)
+    if ratio > MAX_INTRADAY_RANGE_RATIO:
+        return (
+            f"Intraday-Preisspanne {ratio:.0f}x "
+            f"(open={open_} high={high} low={low} close={close}) "
+            f"über Schwelle {MAX_INTRADAY_RANGE_RATIO}x"
+        )
+    return None
+
+
+@dataclass(frozen=True, slots=True)
 class HistoryResult:
     symbol: str
     timeframe: str
@@ -84,6 +131,7 @@ class HistoryResult:
     listing_start: datetime | None  # first bar OKX has -- None if the symbol has no data at all
     bar_count: int
     fetched_at: datetime
+    implausible_bars: list[ImplausibleBar]  # HED-155: artifact candles dropped from this fetch
 
 
 class HistoryCache:
@@ -183,19 +231,38 @@ def to_frame(bars: list[Bar]) -> pd.DataFrame:
     )
 
 
-def _rows_to_bars(rows: dict[int, list]) -> list[Bar]:
-    return [
-        Bar(
-            time=datetime.fromtimestamp(ts / 1000, UTC),
-            open=to_decimal(row[1]),
-            high=to_decimal(row[2]),
-            low=to_decimal(row[3]),
-            close=to_decimal(row[4]),
-            volume=to_decimal(row[5]),
-        )
-        for ts, row in sorted(rows.items())
-        if row[4] is not None
-    ]
+def _rows_to_bars(rows: dict[int, list]) -> tuple[list[Bar], list[ImplausibleBar]]:
+    """Turn raw OKX rows into bars, dropping price artifacts (HED-155).
+
+    Returns the clean bars plus every candle rejected as implausible --
+    rejected candles are logged here and also returned, never silently
+    dropped; see ``ImplausibleBar``.
+    """
+    bars: list[Bar] = []
+    implausible: list[ImplausibleBar] = []
+    for ts, row in sorted(rows.items()):
+        if row[4] is None:
+            continue
+        time = datetime.fromtimestamp(ts / 1000, UTC)
+        open_, high, low, close = (to_decimal(row[i]) for i in (1, 2, 3, 4))
+        volume = to_decimal(row[5])
+        reason = implausibility_reason(open_, high, low, close)
+        if reason is not None:
+            log.warning("HED-155: dropping implausible candle %s %s: %s", time, row, reason)
+            implausible.append(
+                ImplausibleBar(
+                    time=time,
+                    open=open_,
+                    high=high,
+                    low=low,
+                    close=close,
+                    volume=volume,
+                    reason=reason,
+                )
+            )
+            continue
+        bars.append(Bar(time=time, open=open_, high=high, low=low, close=close, volume=volume))
+    return bars, implausible
 
 
 async def _collect(
@@ -207,7 +274,7 @@ async def _collect(
     page_limit: int = PAGE_LIMIT,
     max_iterations: int = MAX_ITERATIONS,
     max_empty_windows: int = MAX_EMPTY_WINDOWS,
-) -> list[Bar]:
+) -> tuple[list[Bar], list[ImplausibleBar]]:
     step = TIMEFRAME_STEP[timeframe]
     cursor = since
     rows: dict[int, list] = {}
@@ -274,12 +341,20 @@ async def refresh(
         await _validate_symbol(exchange, symbol)
         cached = cache.read(exchange_id, symbol, timeframe)
         since = cached[-1].time + TIMEFRAME_STEP[timeframe] if cached else EARLIEST_SINCE
-        fresh = await _collect(exchange, symbol, timeframe, since, now)
+        fresh, implausible = await _collect(exchange, symbol, timeframe, since, now)
         merged = _merge(cached, fresh)
     finally:
         if owns_exchange:
             await exchange.close()
     cache.write(exchange_id, symbol, timeframe, merged)
+    if implausible:
+        log.warning(
+            "HED-155: %d implausible candle(s) dropped for %s %s %s",
+            len(implausible),
+            exchange_id,
+            symbol,
+            timeframe,
+        )
     return HistoryResult(
         symbol=symbol,
         timeframe=timeframe,
@@ -288,5 +363,6 @@ async def refresh(
         gaps=find_gaps(merged, timeframe),
         listing_start=merged[0].time if merged else None,
         bar_count=len(merged),
+        implausible_bars=implausible,
         fetched_at=now,
     )
