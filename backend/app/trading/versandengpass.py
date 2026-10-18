@@ -228,15 +228,21 @@ class Versandengpass:
         return await self.send(session, order)
 
     async def lese_order_status(
-        self, exchange: str, order_id: str, symbol: str
+        self, exchange: str, order_id: str, symbol: str, *, ist_algo_order: bool = False
     ) -> "OrderStatusErgebnis | None":
         """Reiner Lesevorgang (Auflage 3, Festlegung F-1 Punkt 2): Status/Füllmenge
-        einer Einstiegs-Order. Nicht der Doppelprüfung der Sperrkennzeichen unterworfen
-        -- ein gesetztes Kennzeichen darf das Hinsehen nicht verbieten.
+        einer Order. Nicht der Doppelprüfung der Sperrkennzeichen unterworfen -- ein
+        gesetztes Kennzeichen darf das Hinsehen nicht verbieten.
+
+        ``ist_algo_order`` (HED-147/HED-150): eine OKX-Algo-Order (Stop-Order) liegt
+        in einem eigenen ccxt/OKX-Namensraum -- Status UND Fill-Preis sind nur über
+        den zweistufigen Lookup in ``okx_demo.lese_algo_order_status`` abrufbar
+        (CRO-Abnahme HED-150, "Weg 3"). Für eine normale Order (Einstieg,
+        ``auto_exit``-Markt-Order) bleibt der einstufige Lesevorgang unverändert.
 
         ``None`` bei jedem Fehlschlag (Timeout, Ablehnung, Formatfehler) -- der
-        Aufrufer (``app.trading.stop_pflicht``) entscheidet über die Konsequenz
-        (bleibt in Z10, kein stiller Zwischenzustand), analog zu
+        Aufrufer (``app.trading.stop_pflicht``/``app.trading.exit_fill_erkennung``)
+        entscheidet über die Konsequenz (kein stiller Zwischenzustand), analog zu
         ``app.schluessel.verifiziere_kontostand``.
         """
         credential = read_exchange_credential(exchange)
@@ -248,10 +254,14 @@ class Versandengpass:
                 symbol,
             )
             return None
-        from app.trading.papier.okx_demo import OkxDemoFehler, lese_order_status
+        from app.trading.papier.okx_demo import OkxDemoFehler
+        from app.trading.papier.okx_demo import lese_algo_order_status as _lese_algo
+        from app.trading.papier.okx_demo import lese_order_status as _lese_normal
 
         try:
-            return await lese_order_status(credential, order_id, symbol)
+            if ist_algo_order:
+                return await _lese_algo(credential, order_id, symbol)
+            return await _lese_normal(credential, order_id, symbol)
         except OkxDemoFehler:
             log.exception("Order-Status-Lesevorgang für %s %s fehlgeschlagen", symbol, order_id)
             return None

@@ -39,10 +39,16 @@ RESULTS = (
 
 
 class AutoExitLogEntry(Base):
-    """Ein unveränderlicher Protokolleintrag je automatischem Ausstiegsvorgang
+    """Ein Protokolleintrag je automatischem Ausstiegsvorgang (Entwurf 8.4).
 
-    (Entwurf 8.4). Zeilen werden eingefügt und nie aktualisiert; eine Korrektur ist
-    ein neuer Datensatz mit `correction_of_id` (Entwurf 8.5).
+    Unveränderlichkeit mit einer engen, CRO-freigegebenen Ausnahme (HED-147,
+    CRO-Abnahme HED-148 Auflage 3): die fachlichen Angaben eines Vorgangs werden
+    nie überschrieben, eine fachliche Korrektur ist weiterhin ausschließlich ein
+    neuer Datensatz mit ``correction_of_id`` (Entwurf 8.5). Ausgenommen sind exakt
+    vier Lebenszyklus-Felder, die den Fill-Status eines bereits versandten
+    (``result == "versandt"``) Eintrags nachtragen: ``result``, ``filled_at``,
+    ``position_after`` und ``gefuellte_menge_gebucht``. Keine stillschweigende
+    Erweiterung auf weitere Felder ohne erneute CRO-Vorlage.
     """
 
     __tablename__ = "auto_exit_log_entries"
@@ -96,3 +102,14 @@ class AutoExitLogEntry(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+
+    # HED-147 (Entwurf Abschnitt 4.3): ohne die Gegenstellen-Order-Id ist der
+    # Fill-Status einer versandten Order nicht abfragbar -- historische Zeilen
+    # (vor diesem Issue) bleiben hier ``None`` und werden von der Exit-Fill-
+    # Erkennung bewusst übersprungen (Festlegung N-6, keine Nachbuchung).
+    gegenstellen_order_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    exchange: Mapped[str | None] = mapped_column(String(20))
+    # ``instrument`` ist ``Asset.symbol``, nicht das Börsensymbol, das
+    # ``Versandengpass.lese_order_status`` braucht.
+    boersensymbol: Mapped[str | None] = mapped_column(String(32))
+    gefuellte_menge_gebucht: Mapped[Decimal | None] = mapped_column(Money, default=Decimal(0))

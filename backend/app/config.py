@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     stop_orderbuch_abgleich_intervall_sekunden: int = 24 * 3600
     # E-9: Totmannfrist des täglichen Abgleichs (Entwurf Abschnitt 10.6).
     stop_orderbuch_totmannfrist_sekunden: int = 26 * 3600
+    # HED-147 (Entwurf Abschnitt 4.6): gleiches Intervall wie die Einstiegs-
+    # Fill-Erkennung -- ein Exit ist nicht weniger dringend zu erkennen als ein
+    # Einstieg.
+    exit_fill_intervall_sekunden: int = 15
 
     def board_notify_email_list(self) -> list[str]:
         return [addr.strip() for addr in self.board_notify_emails.split(",") if addr.strip()]
