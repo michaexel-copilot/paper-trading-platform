@@ -17,6 +17,7 @@ from app.marketdata.base import Quote
 from app.marketdata.service import QuoteView
 from app.models import Order, Portfolio, Position, Trade, ValueSnapshot
 from app.trading.fees import ZERO, FeeTerms, compute_fee, fill_price, round_money
+from app.trading.fill_buchung import buche_fill
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,30 +181,14 @@ async def try_fill(
         if portfolio.cash + result.cash_change < 0:
             return await _reject(session, order_id, "insufficient cash", now)
 
-        realized = ZERO
-        if order.side == "buy":
-            # Average cost uses the unrounded trade value and excludes the fee.
-            cost = plan.price * order.quantity * plan.pricing.fx_rate
-            if position is None:
-                position = Position(
-                    portfolio_id=order.portfolio_id,
-                    asset_id=order.asset_id,
-                    quantity=ZERO,
-                    avg_cost=ZERO,
-                )
-                session.add(position)
-            total = held + order.quantity
-            position.avg_cost = (held * position.avg_cost + cost) / total
-            position.quantity = total
-        else:
-            realized = result.value_base - round_money(position.avg_cost * order.quantity)
-            position.quantity = held - order.quantity
-            if position.quantity == 0:
-                await session.delete(position)
-
-        portfolio.cash += result.cash_change
-        portfolio.fees_paid += result.fee
-        portfolio.realized_pnl += realized
+        # HED-109: Position/avg_cost und Portfolio.cash/fees_paid/realized_pnl werden in
+        # ``buche_fill`` gebucht -- derselben Funktion, die auch die Proposal-Pipeline
+        # (``stop_pflicht._buche_einstiegsfill``) benutzt, damit die beiden Pfade nicht
+        # auseinanderlaufen.
+        realized = await buche_fill(
+            session, portfolio, order.asset_id, order.side, plan.price, order.quantity,
+            plan.pricing.fx_rate, result,
+        )
 
         trade = _build_trade(order, plan, result, realized, now)
         session.add(trade)
