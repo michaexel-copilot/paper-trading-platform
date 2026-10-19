@@ -5,6 +5,7 @@ from app.models.base import Base
 from app.models.board_notifications import BoardNotification
 from app.models.dashboard_audit import ProposalActionAttempt
 from app.models.fees import FeeProfile, PortfolioFeeProfile
+from app.models.fristwaechter import FristEskalation
 from app.models.installation import InstallationMarker
 from app.models.kill_switch import SperrkennzeichenProtokoll
 from app.models.orders import Order, Trade
@@ -25,6 +26,7 @@ __all__ = [
     "BoardNotification",
     "FeeProfile",
     "FirmenweitesSperrkennzeichen",
+    "FristEskalation",
     "InstallationMarker",
     "LoginAttempt",
     "Order",

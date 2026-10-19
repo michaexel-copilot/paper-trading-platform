@@ -25,6 +25,7 @@ from app.schluessel import pruefe_schluesseltrennung_beim_start
 from app.schluesseltrennung_laufend import pruefe_einmal as pruefe_schluesseltrennung_einmal
 from app.startgatter import pruefe_installation_marker, pruefe_matcher_fuer_live_artefakt
 from app.trading import exit_fill_erkennung, stop_orderbuch_abgleich, stop_pflicht, versand_treiber
+from app.trading.fristwaechter import pruefe_stufe1_fristen, pruefe_stufe2_fristen
 from app.trading.matcher import Matcher, ProcessLock
 from app.trading.proposals import FRISTWAECHTER_INTERVAL_SECONDS, verfalle_ueberfaellige_vorschlaege
 from app.trading.stufe2 import baue_versandengpass
@@ -74,6 +75,27 @@ async def _expire_overdue_proposals_loop(session_factory) -> None:
         except Exception:
             log.exception("Vorschlag-Fristwächter fehlgeschlagen")
         await asyncio.sleep(FRISTWAECHTER_INTERVAL_SECONDS)
+
+
+async def _fristwaechter_loop(
+    session_factory, market_service: MarketService, interval_seconds: int
+) -> None:
+    """Pfad 7 (HED-185, Entwurf-Ergänzung HED-36, CRO-Entscheidung HED-191 Abschnitt
+    2): Stufe-1- (24h) und Stufe-2-Fristwächter (4h) aus HED-8 §6.1/§6.3 in einem
+    gemeinsamen Durchlauf -- beide sind reine Eskalation/Protokoll, kein
+    automatischer Order-Pfad (Gate-B-Lücke, siehe app.trading.fristwaechter). Jede
+    Teilprüfung fängt Fehler je Kennzeichen bereits selbst ab; dieses try/except ist
+    nur gegen einen unerwarteten Fehler im Durchlauf selbst."""
+    while True:
+        try:
+            await pruefe_stufe1_fristen(session_factory)
+        except Exception:
+            log.exception("Stufe-1-Fristwächter fehlgeschlagen")
+        try:
+            await pruefe_stufe2_fristen(session_factory, market_service)
+        except Exception:
+            log.exception("Stufe-2-Fristwächter fehlgeschlagen")
+        await asyncio.sleep(interval_seconds)
 
 
 async def _pruefe_schluesseltrennung_laufend(
@@ -269,6 +291,14 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
             background.append(asyncio.create_task(_check_assets_daily(session_factory, service)))
         if settings.check_proposal_expiry_on_startup:
             background.append(asyncio.create_task(_expire_overdue_proposals_loop(session_factory)))
+        if settings.fristwaechter_pruefen:
+            background.append(
+                asyncio.create_task(
+                    _fristwaechter_loop(
+                        session_factory, service, settings.fristwaechter_intervall_sekunden
+                    )
+                )
+            )
         if settings.enforce_startgatter and settings.schluesseltrennung_laufend_pruefen:
             background.append(
                 asyncio.create_task(

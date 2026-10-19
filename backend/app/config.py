@@ -102,6 +102,15 @@ class Settings(BaseSettings):
     # Einstieg.
     exit_fill_intervall_sekunden: int = 15
 
+    # Pfad 7 (HED-185, CRO-Entscheidung HED-191 Abschnitt 2b): Fristwächter für die
+    # beiden Kill-Switch-Fristen aus HED-8 §6.1/§6.3 (Stufe 1 24h, Stufe 2 4h) --
+    # unabhängig von run_matcher, wie check_assets_on_startup/
+    # check_proposal_expiry_on_startup, weil er nur beobachtet/eskaliert, nicht
+    # sendet. Nur Eskalation/Protokoll, keine automatische Order (Gate-B-Lücke,
+    # siehe app.trading.fristwaechter).
+    fristwaechter_pruefen: bool = True
+    fristwaechter_intervall_sekunden: int = 300
+
     def board_notify_email_list(self) -> list[str]:
         return [addr.strip() for addr in self.board_notify_emails.split(",") if addr.strip()]
 
