@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dbtypes import utcnow
 from app.kill_switch import setze_firmenweit
+from app.marketdata.service import MarketService
 from app.models.stop_order import StopAbgleichLauf, StopOrderBuch
 from app.trading.versandengpass import Versandengpass
 
@@ -43,10 +44,16 @@ async def pruefe_einmal(
     exchange: str = "okx",
     mengen_rundungstoleranz: Decimal,
     totmannfrist: timedelta,
+    market: MarketService | None = None,
+    tranche: str = "B1",
 ) -> bool:
     """Eine Durchführung (Entwurf Abschnitt 10.1/10.3). Gibt zurück, ob der Abgleich
     bestanden wurde (``True``) -- bei Fehlschlag oder Abweichung wird bereits hier das
-    firmenweite Sperrkennzeichen gesetzt, der Aufrufer muss das nicht zusätzlich tun."""
+    firmenweite Sperrkennzeichen gesetzt, der Aufrufer muss das nicht zusätzlich tun.
+
+    ``market``/``tranche`` (Pfad 2, HED-191 Abschnitt 1b): nur für den Storno-Sweep
+    ruhender Einstiegsorders gebraucht, der unmittelbar nach jedem Setzen des
+    Kennzeichens ausgelöst wird, siehe ``app.trading.storno_sweep``."""
     async with session_factory() as session:
         try:
             bestanden = await _fuehre_abgleich_durch(
@@ -67,10 +74,29 @@ async def pruefe_einmal(
                 begruendung=f"Täglicher Stop-Orderbuch-Abgleich fehlgeschlagen: {exc}"[:1000],
             )
             await session.commit()
+            await _sweepe_nach_sperre(session_factory, engpass, market, tranche)
             return False
 
-    await _pruefe_totmannschalter(session_factory, totmannfrist)
+    if not bestanden:
+        await _sweepe_nach_sperre(session_factory, engpass, market, tranche)
+
+    totmann_ausgeloest = await _pruefe_totmannschalter(session_factory, totmannfrist)
+    if totmann_ausgeloest:
+        await _sweepe_nach_sperre(session_factory, engpass, market, tranche)
     return bestanden
+
+
+async def _sweepe_nach_sperre(
+    session_factory, engpass: Versandengpass, market: MarketService | None, tranche: str
+) -> None:
+    from app.trading.storno_sweep import sweep_ruhende_einstiegsorders
+
+    try:
+        await sweep_ruhende_einstiegsorders(
+            session_factory, engpass, market=market, tranche=tranche
+        )
+    except Exception:
+        log.exception("Storno-Sweep nach Stop-Orderbuch-Abgleich-Sperre fehlgeschlagen (Pfad 2)")
 
 
 async def _fuehre_abgleich_durch(
@@ -179,12 +205,15 @@ async def _fuehre_abgleich_durch(
     return ergebnis == "bestanden"
 
 
-async def _pruefe_totmannschalter(session_factory, totmannfrist: timedelta) -> None:
+async def _pruefe_totmannschalter(session_factory, totmannfrist: timedelta) -> bool:
     """Entwurf Abschnitt 10.6, Punkt 2: Durchlauf bleibt aus -- eigener, von
     ``_fuehre_abgleich_durch`` unabhängiger Blick auf den letzten bestandenen Lauf.
     Läuft nach jedem Durchlauf UND wird beim Prozessstart einmal zusätzlich
     aufgerufen (siehe ``app.main``), damit ein langer Stillstand auch beim Neustart
-    erkannt wird, nicht erst nach dem nächsten vollen Intervall."""
+    erkannt wird, nicht erst nach dem nächsten vollen Intervall.
+
+    Gibt zurück, ob dieser Aufruf das Kennzeichen gesetzt hat (Pfad 2, HED-191
+    Abschnitt 1b) -- der Aufrufer löst dann den Storno-Sweep aus."""
     async with session_factory() as session:
         letzter_bestandener = await session.scalar(
             select(StopAbgleichLauf.beendet_at)
@@ -193,7 +222,7 @@ async def _pruefe_totmannschalter(session_factory, totmannfrist: timedelta) -> N
             .limit(1)
         )
         if letzter_bestandener is not None and utcnow() - letzter_bestandener <= totmannfrist:
-            return
+            return False
         # Kein bestandener Lauf überhaupt (frischer Start, E-9: auch das zählt als
         # Ausbleiben) ODER der letzte liegt zu lange zurück.
         await setze_firmenweit(
@@ -206,3 +235,4 @@ async def _pruefe_totmannschalter(session_factory, totmannfrist: timedelta) -> N
             ),
         )
         await session.commit()
+        return True

@@ -216,6 +216,47 @@ async def pruefe_stufe2(
     return True
 
 
+async def berechne_limitauslastung_snapshot(
+    session: AsyncSession, market: MarketService, proposal: Proposal, *, tranche: str = "B1"
+) -> list[dict] | None:
+    """Pfad 18 (Entwurf 9.6, CRO-Entscheidung HED-191 Abschnitt 3b): rein
+    dokumentarischer Limitauslastung-Snapshot für einen Vorschlag, dessen Z7->Z9-
+    Ablehnung nicht aus Stufe 2 selbst kommt, sondern aus einem aktiven
+    Sperrkennzeichen (``app.trading.versand_treiber._lehne_wegen_sperre_ab``). Die
+    Order ist an dieser Stelle durch die Sperre bereits verhindert -- B-2s Fail-closed-
+    Grundsatz ("Kennzahl nicht berechenbar = kein Handel") gilt hier nicht, ``None``
+    heißt nur "nicht berechenbar", nie eine Ablehnung.
+
+    Dieselbe Kontext-Beschaffung wie Schritt 2.7/2.8 in ``pruefe_stufe2`` (bewusst
+    nicht dorthin verschoben, um die bereits CRO-freigegebene Stufe-2-Prüfung selbst
+    nicht anzufassen)."""
+    strategy = await session.get(Strategy, proposal.strategy_id)
+    if strategy is None or strategy.portfolio_id is None:
+        return None
+    portfolio = await session.get(Portfolio, strategy.portfolio_id)
+    if portfolio is None:
+        return None
+    asset = await session.scalar(select(Asset).where(Asset.symbol == proposal.instrument))
+    if asset is None:
+        return None
+
+    eingabe = ProposalEingabe(
+        instrument_asset_id=asset.id,
+        direction=proposal.direction,
+        size=proposal.size,
+        proposal_price=proposal.proposal_price,
+        stop_price=proposal.stop_price,
+        stop_distance=proposal.stop_distance,
+        stop_distance_pct=proposal.stop_distance_pct,
+        proposal_kind=proposal.proposal_kind,
+    )
+    ctx = await sammle_kontext(
+        session, market, portfolio, eingabe, tranche=tranche,
+        tranche_eur=tranchen_grenze(tranche),
+    )
+    return [e.to_json() for e in pruefe_alle_limits(ctx)]
+
+
 def baue_versandengpass(market: MarketService, *, tranche: str = "B1") -> Versandengpass:
     """Ein korrekt verdrahteter Versand-Engpass für den Produktionspfad (HED-42 +
     HED-44). Ersetzt die fail-closed Standardwerte aus HED-42 durch die echten

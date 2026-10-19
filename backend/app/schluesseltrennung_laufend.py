@@ -19,7 +19,10 @@ Endlos-Schleife mit Intervall lebt in ``app.main``, genauso wie bei
 import logging
 
 from app.kill_switch import setze_firmenweit
+from app.marketdata.service import MarketService
 from app.schluessel import selbsttest_bestanden
+from app.trading.storno_sweep import sweep_ruhende_einstiegsorders
+from app.trading.versandengpass import Versandengpass
 
 log = logging.getLogger(__name__)
 
@@ -29,10 +32,22 @@ _BEGRUENDUNG = (
 )
 
 
-async def pruefe_einmal(session_factory) -> bool:
+async def pruefe_einmal(
+    session_factory,
+    engpass: Versandengpass | None = None,
+    *,
+    market: MarketService | None = None,
+    tranche: str = "B1",
+) -> bool:
     """Eine Durchführung des vollständigen Selbsttests (Punkte 1-4). Setzt bei
     Fehlschlag automatisch das firmenweite Sperrkennzeichen. Gibt zurück, ob der
-    Selbsttest bestanden wurde."""
+    Selbsttest bestanden wurde.
+
+    ``engpass``/``market`` (Pfad 2, HED-191 Abschnitt 1b): nur für den
+    Storno-Sweep ruhender Einstiegsorders gebraucht, der unmittelbar nach dem Setzen
+    ausgelöst wird -- ``engpass=None`` (z. B. ohne laufenden Matcher) lässt den
+    Sweep auf seinen rein internen Z8-Anteil zurückfallen, siehe
+    ``app.trading.storno_sweep``."""
     bestanden = await selbsttest_bestanden()
     if not bestanden:
         async with session_factory() as session:
@@ -41,4 +56,10 @@ async def pruefe_einmal(session_factory) -> bool:
                 ausloeser="auflagen_selbsttest_fehlgeschlagen",
                 begruendung=_BEGRUENDUNG,
             )
+        try:
+            await sweep_ruhende_einstiegsorders(
+                session_factory, engpass, market=market, tranche=tranche
+            )
+        except Exception:
+            log.exception("Storno-Sweep nach Schlüsseltrennungs-Fehlschlag fehlgeschlagen")
     return bestanden

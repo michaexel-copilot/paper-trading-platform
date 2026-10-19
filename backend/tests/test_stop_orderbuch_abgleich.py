@@ -249,6 +249,92 @@ async def test_zu_alter_bestandener_lauf_loest_totmannschalter_aus(session, sess
     session.add(StopAbgleichLauf(beendet_at=zu_alt, ergebnis="bestanden"))
     await session.commit()
 
-    await _pruefe_totmannschalter(session_factory, TOTMANNFRIST)
+    ausgeloest = await _pruefe_totmannschalter(session_factory, TOTMANNFRIST)
 
+    assert ausgeloest is True
     assert await ist_firmenweit_gesperrt(session) is True
+
+
+# --- Pfad 2 (Entwurf 9.6, CRO-Entscheidung HED-191 Abschnitt 1b): Storno-Sweep wird
+# unmittelbar nach jedem Setzen des Kennzeichens ausgelöst ------------------------
+
+
+async def test_abweichung_loest_storno_sweep_aus(session, session_factory, monkeypatch):
+    """Eine Abweichung erzeugt eine Lauf-Zeile mit ``ergebnis="abweichung"``, keine
+    mit ``"bestanden"`` -- ohne einen älteren bestandenen Lauf löst derselbe Aufruf
+    deshalb zusätzlich den Totmannschalter aus (E-9). Beide Zweige rufen den Sweep mit
+    denselben durchgereichten ``engpass``/``market``/``tranche`` auf -- zwei Aufrufe,
+    keine stille Dopplung der eigentlichen Sweep-Logik selbst (die ist in
+    ``test_storno_sweep.py`` geprüft)."""
+    import app.trading.storno_sweep as storno_sweep
+
+    aufrufe = []
+
+    async def fake_sweep(session_factory_arg, engpass_arg, *, market=None, tranche="B1"):
+        aufrufe.append((engpass_arg, market, tranche))
+        return 0
+
+    monkeypatch.setattr(storno_sweep, "sweep_ruhende_einstiegsorders", fake_sweep)
+
+    await _eigene_zeile(session, zustand="storniert", gegenstellen_algo_id="algo-alt")
+    await session.commit()
+    engpass = _FakeEngpass({"BTC/USDC": [_algo("algo-waise")]})
+    markt_dummy = object()
+
+    bestanden = await pruefe_einmal(
+        session_factory, engpass, mengen_rundungstoleranz=TOLERANZ, totmannfrist=TOTMANNFRIST,
+        market=markt_dummy, tranche="B2",
+    )
+
+    assert bestanden is False
+    assert aufrufe == [(engpass, markt_dummy, "B2"), (engpass, markt_dummy, "B2")]
+
+
+async def test_bestandener_abgleich_loest_keinen_storno_sweep_aus(
+    session, session_factory, monkeypatch
+):
+    import app.trading.storno_sweep as storno_sweep
+
+    aufrufe = []
+
+    async def fake_sweep(session_factory_arg, engpass_arg, *, market=None, tranche="B1"):
+        aufrufe.append((engpass_arg, market, tranche))
+        return 0
+
+    monkeypatch.setattr(storno_sweep, "sweep_ruhende_einstiegsorders", fake_sweep)
+
+    engpass = _FakeEngpass({})
+
+    bestanden = await pruefe_einmal(
+        session_factory, engpass, mengen_rundungstoleranz=TOLERANZ, totmannfrist=TOTMANNFRIST,
+    )
+
+    assert bestanden is True
+    assert aufrufe == []
+
+
+async def test_bestandener_lauf_verhindert_totmannschalter_und_sweep(
+    session, session_factory, monkeypatch
+):
+    """Gegenprobe zu oben: ein frischer bestandener Lauf (z. B. aus demselben
+    ``pruefe_einmal``-Aufruf) hält den Totmannschalter ruhig -- ``_pruefe_
+    totmannschalter`` meldet das über den Rückgabewert, der Aufrufer löst dann
+    keinen Sweep aus."""
+    import app.trading.storno_sweep as storno_sweep
+    from app.trading.stop_orderbuch_abgleich import _pruefe_totmannschalter
+
+    aufrufe = []
+
+    async def fake_sweep(session_factory_arg, engpass_arg, *, market=None, tranche="B1"):
+        aufrufe.append((engpass_arg, market, tranche))
+        return 0
+
+    monkeypatch.setattr(storno_sweep, "sweep_ruhende_einstiegsorders", fake_sweep)
+
+    session.add(StopAbgleichLauf(beendet_at=utcnow(), ergebnis="bestanden"))
+    await session.commit()
+
+    ausgeloest = await _pruefe_totmannschalter(session_factory, TOTMANNFRIST)
+
+    assert ausgeloest is False
+    assert aufrufe == []

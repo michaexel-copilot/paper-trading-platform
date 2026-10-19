@@ -76,28 +76,47 @@ async def _expire_overdue_proposals_loop(session_factory) -> None:
         await asyncio.sleep(FRISTWAECHTER_INTERVAL_SECONDS)
 
 
-async def _pruefe_schluesseltrennung_laufend(session_factory, interval_seconds: int) -> None:
+async def _pruefe_schluesseltrennung_laufend(
+    session_factory,
+    interval_seconds: int,
+    engpass: Versandengpass | None,
+    market_service: MarketService,
+    tranche: str,
+) -> None:
     """Laufende Prüfung (HED-55, Entwurf Abschnitt 3.2): dieselbe Prüfung wie beim
     Start, in festem Intervall während des Betriebs. ``pruefe_schluesseltrennung_einmal``
-    setzt bei Fehlschlag selbst das firmenweite Sperrkennzeichen; dieses try/except ist
+    setzt bei Fehlschlag selbst das firmenweite Sperrkennzeichen und löst danach den
+    Storno-Sweep ruhender Einstiegsorders aus (Pfad 2, HED-191); dieses try/except ist
     nur gegen einen unerwarteten Fehler im Sweep selbst (analog zu den Schleifen oben)."""
     while True:
         await asyncio.sleep(interval_seconds)
         try:
-            await pruefe_schluesseltrennung_einmal(session_factory)
+            await pruefe_schluesseltrennung_einmal(
+                session_factory, engpass, market=market_service, tranche=tranche
+            )
         except Exception:
             log.exception("Laufende Schlüsseltrennungs-Prüfung fehlgeschlagen")
 
 
 async def _versand_treiber_loop(
-    session_factory, engpass: Versandengpass, interval_seconds: int
+    session_factory,
+    engpass: Versandengpass,
+    interval_seconds: int,
+    market_service: MarketService,
+    tranche: str,
 ) -> None:
     """B-12 (HED-84, Entwurf Abschnitt 5.1): treibt board-freigegebene Vorschläge Z7
     -> Z10. ``treibe_einmal`` fängt Fehler je Vorschlag bereits selbst ab; dieses
-    try/except ist nur gegen einen unerwarteten Fehler im Durchlauf selbst."""
+    try/except ist nur gegen einen unerwarteten Fehler im Durchlauf selbst.
+
+    ``market_service``/``tranche`` (Pfad 18, HED-191): nur für den dokumentarischen
+    Limitauslastung-Snapshot bei einer Sperren-Ablehnung gebraucht, siehe
+    ``versand_treiber.berechne_limitauslastung_snapshot``."""
     while True:
         try:
-            await versand_treiber.treibe_einmal(session_factory, engpass)
+            await versand_treiber.treibe_einmal(
+                session_factory, engpass, market=market_service, tranche=tranche
+            )
         except Exception:
             log.exception("Versand-Treiber fehlgeschlagen")
         await asyncio.sleep(interval_seconds)
@@ -140,10 +159,17 @@ async def _exit_fill_loop(
 
 
 async def _stop_orderbuch_abgleich_loop(
-    session_factory, engpass: Versandengpass, interval_seconds: int, toleranz: Decimal, totmannfrist
+    session_factory,
+    engpass: Versandengpass,
+    interval_seconds: int,
+    toleranz: Decimal,
+    totmannfrist,
+    market_service: MarketService,
+    tranche: str,
 ) -> None:
     """B-12 (Entwurf Abschnitt 10.1): täglicher Abgleich. ``pruefe_einmal`` setzt bei
-    Abweichung/Fehlschlag/Ausbleiben bereits selbst das firmenweite Sperrkennzeichen."""
+    Abweichung/Fehlschlag/Ausbleiben bereits selbst das firmenweite Sperrkennzeichen
+    UND löst danach den Storno-Sweep ruhender Einstiegsorders aus (Pfad 2, HED-191)."""
     while True:
         try:
             await stop_orderbuch_abgleich.pruefe_einmal(
@@ -151,6 +177,8 @@ async def _stop_orderbuch_abgleich_loop(
                 engpass,
                 mengen_rundungstoleranz=toleranz,
                 totmannfrist=totmannfrist,
+                market=market_service,
+                tranche=tranche,
             )
         except Exception:
             log.exception("Stop-Orderbuch-Abgleich fehlgeschlagen")
@@ -221,6 +249,15 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
         service = market_service or build_market(settings)
         service.recorder = make_price_recorder(session_factory)
         matcher = Matcher(session_factory, service)
+        # Ein sendefähiger Engpass existiert ausschließlich im ``run_matcher``-Prozess
+        # (Festlegung F-3: kein zweiter Prozess derselben Installation darf denselben
+        # Vorschlag parallel versenden). Die Schlüsseltrennungs-Schleife unten bekommt in
+        # jedem anderen Prozess ``engpass=None`` -- ``sweep_ruhende_einstiegsorders``
+        # (Pfad 2, HED-191 Abschnitt 1b) fährt dann nur den rein internen Z8-Teil, ohne
+        # jeden Sendeversuch an der Gegenstelle (CRO-Befund HED-197).
+        engpass: Versandengpass | None = None
+        if settings.run_matcher:
+            engpass = baue_versandengpass(service, tranche=settings.freigegebene_tranche)
 
         app.state.engine = engine
         app.state.session_factory = session_factory
@@ -236,7 +273,11 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
             background.append(
                 asyncio.create_task(
                     _pruefe_schluesseltrennung_laufend(
-                        session_factory, settings.schluesseltrennung_intervall_sekunden
+                        session_factory,
+                        settings.schluesseltrennung_intervall_sekunden,
+                        engpass,
+                        service,
+                        settings.freigegebene_tranche,
                     )
                 )
             )
@@ -247,7 +288,6 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
             # täglicher Abgleich laufen nur in diesem Prozess (Festlegung F-3,
             # gleiche Begründung wie beim Matcher selbst) -- kein zweiter Prozess
             # derselben Installation darf denselben Vorschlag parallel versenden.
-            engpass = baue_versandengpass(service, tranche=settings.freigegebene_tranche)
             pflicht_stop_nachfrist = timedelta(seconds=settings.pflicht_stop_nachfrist_sekunden)
             totmannfrist = timedelta(seconds=settings.stop_orderbuch_totmannfrist_sekunden)
             mengen_toleranz = Decimal(settings.stop_mengen_rundungstoleranz)
@@ -260,11 +300,17 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
                 engpass,
                 mengen_rundungstoleranz=mengen_toleranz,
                 totmannfrist=totmannfrist,
+                market=service,
+                tranche=settings.freigegebene_tranche,
             )
             background.append(
                 asyncio.create_task(
                     _versand_treiber_loop(
-                        session_factory, engpass, settings.versand_treiber_intervall_sekunden
+                        session_factory,
+                        engpass,
+                        settings.versand_treiber_intervall_sekunden,
+                        service,
+                        settings.freigegebene_tranche,
                     )
                 )
             )
@@ -287,6 +333,8 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
                         settings.stop_orderbuch_abgleich_intervall_sekunden,
                         mengen_toleranz,
                         totmannfrist,
+                        service,
+                        settings.freigegebene_tranche,
                     )
                 )
             )

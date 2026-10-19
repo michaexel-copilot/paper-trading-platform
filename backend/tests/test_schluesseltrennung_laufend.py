@@ -41,3 +41,47 @@ async def test_pruefe_einmal_setzt_kennzeichen_nicht_bei_erfolg(session_factory,
     async with session_factory() as session:
         zeile = await session.scalar(select(FirmenweitesSperrkennzeichen).limit(1))
         assert zeile is None
+
+
+async def test_pruefe_einmal_loest_storno_sweep_bei_fehlschlag_aus(session_factory, monkeypatch):
+    """Pfad 2 (Entwurf 9.6, CRO-Entscheidung HED-191 Abschnitt 1b): der Storno-Sweep
+    läuft unmittelbar nach dem Setzen, nicht nur beim nächsten planmäßigen
+    Versand-Treiber-Durchlauf. Die Sweep-Logik selbst ist in test_storno_sweep.py
+    geprüft -- hier nur die Verdrahtung."""
+    async def fake_bestanden():
+        return False
+
+    monkeypatch.setattr(laufend, "selbsttest_bestanden", fake_bestanden)
+
+    aufrufe = []
+
+    async def fake_sweep(session_factory_arg, engpass_arg, *, market=None, tranche="B1"):
+        aufrufe.append((engpass_arg, market, tranche))
+        return 0
+
+    monkeypatch.setattr(laufend, "sweep_ruhende_einstiegsorders", fake_sweep)
+
+    engpass_dummy = object()
+    markt_dummy = object()
+    await laufend.pruefe_einmal(session_factory, engpass_dummy, market=markt_dummy, tranche="B2")
+
+    assert aufrufe == [(engpass_dummy, markt_dummy, "B2")]
+
+
+async def test_pruefe_einmal_loest_keinen_sweep_bei_erfolg_aus(session_factory, monkeypatch):
+    async def fake_bestanden():
+        return True
+
+    monkeypatch.setattr(laufend, "selbsttest_bestanden", fake_bestanden)
+
+    aufrufe = []
+
+    async def fake_sweep(session_factory_arg, engpass_arg, *, market=None, tranche="B1"):
+        aufrufe.append((engpass_arg, market, tranche))
+        return 0
+
+    monkeypatch.setattr(laufend, "sweep_ruhende_einstiegsorders", fake_sweep)
+
+    await laufend.pruefe_einmal(session_factory, object(), market=object())
+
+    assert aufrufe == []

@@ -1,7 +1,9 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
+from app import main as app_main
 from app import schluessel
 from app.betriebsart import Betriebsart
 from app.config import Settings
@@ -256,3 +258,44 @@ async def test_app_startet_nicht_mit_fremdem_schluessel_lesbar(
     with pytest.raises(SchluesselFehler):
         async with application.router.lifespan_context(application):
             pass
+
+
+async def test_schluesseltrennung_laufend_bekommt_keinen_sendefaehigen_engpass_ohne_matcher(
+    betriebsart, monkeypatch, tmp_path, market
+):
+    """CRO-Befund HED-197 (PR #42): ``engpass`` darf nur im ``run_matcher``-Prozess
+    sendefähig sein (Festlegung F-3, kein zweiter Prozess derselben Installation darf
+    denselben Vorschlag parallel versenden). Ein Prozess mit ``run_matcher=False``, der
+    die Schlüsseltrennungs-Schleife laufen lässt, muss ``engpass=None`` übergeben --
+    sonst könnte ein zweiter, nicht-autoritativer Prozess beim Storno-Sweep real an die
+    Gegenstelle senden."""
+    betriebsart("papier")
+    monkeypatch.setenv("ARTEFAKT_ART", "papier_artefakt")
+    monkeypatch.setenv("OKX_DEMO_API_KEY", "demo-key")
+    monkeypatch.setenv("OKX_DEMO_API_SECRET", "demo-secret")
+    monkeypatch.delenv("OKX_LIVE_API_KEY", raising=False)
+    _stelle_kontostand_leser(monkeypatch, erfolgreich=True)
+
+    aufrufe = []
+
+    async def fake_laufend(session_factory, interval_seconds, engpass, market_service, tranche):
+        aufrufe.append(engpass)
+
+    monkeypatch.setattr(app_main, "_pruefe_schluesseltrennung_laufend", fake_laufend)
+
+    settings = Settings(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        auto_migrate=True,
+        run_matcher=False,
+        check_assets_on_startup=False,
+        check_proposal_expiry_on_startup=False,
+        schluesseltrennung_laufend_pruefen=True,
+        lock_file=str(tmp_path / "backend.lock"),
+        frontend_dist=str(tmp_path / "no-frontend"),
+        enforce_startgatter=True,
+    )
+    application = create_app(settings, market)
+    async with application.router.lifespan_context(application):
+        await asyncio.sleep(0)
+
+    assert aufrufe == [None]

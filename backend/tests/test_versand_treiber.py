@@ -5,12 +5,14 @@ Abschnitt 5). Prüfplan P-1.
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 
 from app.dbtypes import utcnow
 from app.models import Portfolio, Strategy
 from app.models.proposals import (
     STATE_BOARD_FREIGEGEBEN,
     STATE_STUFE1_LAEUFT,
+    STATE_STUFE2_ABGELEHNT,
     STATE_VERSANDT,
     STATE_WARTET_AUF_BOARD,
 )
@@ -199,3 +201,96 @@ async def _nicht_aufrufen(order):
     raise AssertionError(
         "_sende_an_gegenstelle darf für diesen Vorschlag nicht aufgerufen werden"
     )
+
+
+# --- Pfad 18 (Entwurf 9.6, CRO-Entscheidung HED-191 Abschnitt 3): Protokollzeile bei
+# Freigabeversuch während Sperre ----------------------------------------------------
+
+
+async def test_sperre_fuehrt_zu_echtem_z7_z9_uebergang_mit_eigenem_grund(
+    mit_schluessel, session, session_factory, market, prices, strategy, btc
+):
+    proposal = await _freigegebener_vorschlag(session, strategy)
+    kennzeichen = await session.scalar(select(FirmenweitesSperrkennzeichen))
+    kennzeichen.gesetzt = True
+    await session.commit()
+
+    engpass = baue_versandengpass(market)
+    engpass._sende_an_gegenstelle = _nicht_aufrufen
+
+    versandt = await treibe_einmal(session_factory, engpass, market=market)
+
+    assert versandt == 0
+    await session.refresh(proposal)
+    # Vorher (ohne HED-192/Pfad 18) blieb der Vorschlag unverändert in Z7 liegen --
+    # das ist genau die Lücke, die diese Karte schließt.
+    assert proposal.state == STATE_STUFE2_ABGELEHNT
+    assert proposal.rejection_reason_code == "stufe2_abgelehnt_wegen_sperre"
+    assert proposal.log_category == "stage2_rejection"
+    assert isinstance(proposal.stage2_limit_utilization, list)
+    assert len(proposal.stage2_limit_utilization) > 0
+
+
+async def test_sperre_ohne_market_markiert_limitauslastung_nicht_berechenbar(
+    mit_schluessel, session, session_factory, strategy, btc
+):
+    """``market=None`` (Standardwert) heißt nur "nicht berechenbar" -- die Zeile ist
+    rein dokumentarisch (3b), kein Blockadeeffekt auf den Z7->Z9-Übergang selbst."""
+    proposal = await _freigegebener_vorschlag(session, strategy)
+    kennzeichen = await session.scalar(select(FirmenweitesSperrkennzeichen))
+    kennzeichen.gesetzt = True
+    await session.commit()
+
+    engpass = Versandengpass()  # fail-closed Standardwerte, kein Markt gebraucht
+    engpass._sende_an_gegenstelle = _nicht_aufrufen
+
+    versandt = await treibe_einmal(session_factory, engpass)
+
+    assert versandt == 0
+    await session.refresh(proposal)
+    assert proposal.state == STATE_STUFE2_ABGELEHNT
+    assert proposal.rejection_reason_code == "stufe2_abgelehnt_wegen_sperre"
+    assert proposal.stage2_limit_utilization == [
+        {
+            "limit": "pfad18_sperre",
+            "berechenbar": False,
+            "gebrochen": True,
+            "auslastung_pct": None,
+            "begruendung": (
+                "Limitauslastung-Snapshot bei Sperren-Ablehnung nicht berechenbar "
+                "(Pfad 18)"
+            ),
+        }
+    ]
+
+
+async def test_andere_technische_ablehnung_bleibt_in_z7_ohne_sperren_uebergang(
+    mit_schluessel, session, session_factory, market, prices, strategy, btc, monkeypatch
+):
+    """Abgrenzung zu Pfad 18: eine Ablehnung, die NICHT vom Sperrkennzeichen kommt
+    (hier: Schlüssel-Betriebsart passt nicht), bleibt wie bisher in Z7 -- nur
+    ``unterdrueckt_durch_sperre`` löst den neuen Z7->Z9-Übergang aus."""
+    import app.trading.versandengpass as versandengpass_modul
+    from app.betriebsart import Betriebsart
+    from app.schluessel import ExchangeCredential
+
+    proposal = await _freigegebener_vorschlag(session, strategy)
+    engpass = baue_versandengpass(market)
+    engpass._sende_an_gegenstelle = _nicht_aufrufen
+
+    # Betriebsart-Markierung des Schlüssels passt nicht zur laufenden Betriebsart ->
+    # Versandengpass._pruefe lehnt bereits in Schritt 1 ab, bevor die
+    # Sperrkennzeichen-Doppelprüfung (Schritt 3-5) überhaupt erreicht wird.
+    def falsche_betriebsart(_exchange):
+        return ExchangeCredential(
+            exchange="okx", api_key="k", api_secret="s", passphrase=None,
+            betriebsart=Betriebsart.LIVE, simulated_trading_header=False,
+        )
+
+    monkeypatch.setattr(versandengpass_modul, "read_exchange_credential", falsche_betriebsart)
+
+    versandt = await treibe_einmal(session_factory, engpass, market=market)
+
+    assert versandt == 0
+    await session.refresh(proposal)
+    assert proposal.state == STATE_BOARD_FREIGEGEBEN
