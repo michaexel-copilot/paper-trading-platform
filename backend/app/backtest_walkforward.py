@@ -7,11 +7,20 @@ wie ``app.backtest_data.historical.HistoryResult.frame`` oder jede andere
 Open/High/Low/Close/Volume-DataFrame mit DatetimeIndex), ein Kostenmodell aus
 ``app.backtest_costs`` und eine ``backtesting.Strategy``-Klasse, zerlegt die Reihe in
 mindestens vier Trainings-/Test-Fenster und führt für jedes Fenster einen echten
-``backtesting.Backtest`` auf der Test-(Out-of-Sample-)Teilreihe aus, mit den Kosten aus
-HED-120 auf jedem simulierten Fill. Das eigentliche Anpassen von Strategie-Parametern
-auf der Trainings-Teilreihe ist Sache des Aufrufers (``fit``-Hook, siehe
-``run_walk_forward``) -- das ist Quant-Researcher-Arbeit, keine, die dieses Modul
+``backtesting.lib.FractionalBacktest`` auf der Test-(Out-of-Sample-)Teilreihe aus, mit
+den Kosten aus HED-120 auf jedem simulierten Fill. Das eigentliche Anpassen von
+Strategie-Parametern auf der Trainings-Teilreihe ist Sache des Aufrufers (``fit``-Hook,
+siehe ``run_walk_forward``) -- das ist Quant-Researcher-Arbeit, keine, die dieses Modul
 selbst trifft.
+
+HED-180 (Nachforderung CRO zu HED-121, aus der Prüfung HED-178): ``backtesting.Backtest``
+stückelt Positionen ganzzahlig. Bei echten BTC/ETH-Preisen (deutlich über dem
+Standard-Testkapital von 10 000 USD) verwirft das Kauforders lautlos als "insufficient
+margin" -- keine Exception, nur eine Python-Warnung, die eine stillschweigend zu
+niedrige Trade-Zahl erzeugt (gemessen in HED-174 Abschnitt 9: 41 statt 76 Trades ohne
+den Fix). Deshalb hier fest ``FractionalBacktest`` statt ``Backtest`` -- nicht nur am
+Aufrufpunkt eines einzelnen Analyseskripts, sondern in diesem Modul selbst, damit kein
+künftiger Family-A/C-Lauf den Workaround vergessen kann.
 
 Offene Methodik-Frage, absichtlich NICHT hier entschieden (HED-125, an
 CRO/Quant Researcher/Board verwiesen): Family A hat auf OKX für die handelbaren
@@ -42,7 +51,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
-from backtesting import Backtest, Strategy
+from backtesting import Strategy
+from backtesting.lib import FractionalBacktest
 
 from app.backtest_costs import BacktestCostModel
 
@@ -232,7 +242,10 @@ def run_walk_forward(
         train_df = frame.iloc[w.train]
         test_df = frame.iloc[w.test]
         params = fit(train_df) if fit is not None else {}
-        bt = Backtest(
+        # HED-180: FractionalBacktest statt Backtest, siehe Modul-Docstring -- sonst
+        # werden Kauforders bei echten BTC/ETH-Preisen gegenüber kleinem Testkapital
+        # lautlos als "insufficient margin" verworfen.
+        bt = FractionalBacktest(
             test_df,
             strategy_cls,
             cash=cash,
@@ -313,7 +326,9 @@ def run_final_holdout(
     der Aufrufer, nicht dieses Modul).
     """
     params = fit(train_frame) if fit is not None and train_frame is not None else {}
-    bt = Backtest(
+    # HED-180: FractionalBacktest statt Backtest, dieselbe Begründung wie in
+    # run_walk_forward (Modul-Docstring).
+    bt = FractionalBacktest(
         test_frame,
         strategy_cls,
         cash=cash,
