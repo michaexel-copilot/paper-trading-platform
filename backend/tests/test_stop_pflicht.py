@@ -23,6 +23,7 @@ from app.models.proposals import (
 )
 from app.models.sperrkennzeichen import FirmenweitesSperrkennzeichen
 from app.models.stop_order import StopOrderBuch
+from app.models.versandengpass import VersandEngpassEintrag
 from app.sperrkennzeichen import ist_firmenweit_gesperrt
 from app.trading.papier.okx_demo import OrderStatusErgebnis
 from app.trading.proposals import Signal, create_proposal, transition
@@ -276,7 +277,10 @@ async def test_nachfuehrung_platziert_neuen_stop_vor_stornierung_des_alten(
 
     gattungen = [o.gattung for o in engpass.sende_calls]
     # Reihenfolge ist die Entscheidung (F-13): neuer Stop zuerst, dann Stornierung.
-    stop_index = gattungen.index("stop_platzierung", gattungen.index("stop_platzierung") + 1)
+    # Der Ersatz-Stop einer echten Nachführung läuft unter "stop_nachfuehrung", nicht
+    # "stop_platzierung" (HED-192) -- nur diese Gattung hält ein gesetztes
+    # Sperrkennzeichen laut Sperrwirkungstabelle (Entwurf 9.3) an.
+    stop_index = gattungen.index("stop_nachfuehrung")
     storno_index = gattungen.index("stornierung")
     assert storno_index > stop_index
 
@@ -293,6 +297,58 @@ async def test_nachfuehrung_platziert_neuen_stop_vor_stornierung_des_alten(
     assert alter.ersetzt_durch_id == neuer.id
     assert neuer.zustand == "offen"
     assert neuer.menge_soll == D("0.5")
+
+
+async def test_nachfuehrung_wird_vom_gesetzten_sperrkennzeichen_ueber_realen_erzeuger_angehalten(
+    session, session_factory, market, prices, strategy
+):
+    """HED-192 (CRO-Abnahme HED-190, Entwurf 9.3/9.6 Pfad 6): belegt den realen
+    Erzeuger (``_stelle_stop_sicher`` über ``pruefe_fills_einmal``), nicht nur die
+    Sperrwirkungstabelle auf Versandengpass-Ebene (PR #40) -- echter ``Versandengpass``
+    ohne ``_pruefe``-Override, nur Netzwerk/Status gefaked."""
+    proposal = await _versandter_vorschlag(session, strategy)
+    engpass = _FakeEngpass()
+    engpass.plane_status(proposal.gegenstellen_order_id, _status("teilgefuellt", "0.3", "0.2"))
+
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
+    assert any(o.gattung == "stop_platzierung" for o in engpass.sende_calls)
+
+    # Sperrkennzeichen wird NACH der Erstplatzierung gesetzt -- genau der Fall, den
+    # Pfad 6 prüft: eine laufende Position bekommt eine zweite Teilfüllung, während
+    # der Kill-Switch aktiv ist.
+    kennzeichen = await session.scalar(select(FirmenweitesSperrkennzeichen))
+    kennzeichen.gesetzt = True
+    await session.commit()
+
+    vor_den_calls = len(engpass.sende_calls)
+    engpass.plane_status(proposal.gegenstellen_order_id, _status("gefuellt", "0.5"))
+    await pruefe_fills_einmal(session_factory, engpass, market, pflicht_stop_nachfrist=NACHFRIST)
+
+    # Die Nachführung wird im echten Prüfschritt abgelehnt, bevor sie je an die
+    # Gegenstelle geht -- kein neuer `_sende_an_gegenstelle`-Call für diesen Versuch.
+    assert len(engpass.sende_calls) == vor_den_calls
+
+    eintrag = await session.scalar(
+        select(VersandEngpassEintrag)
+        .where(VersandEngpassEintrag.gattung == "stop_nachfuehrung")
+        .order_by(VersandEngpassEintrag.id.desc())
+    )
+    assert eintrag is not None
+    assert eintrag.angenommen is False
+    assert eintrag.ablehnungsgrund == "unterdrueckt_durch_sperre"
+
+    # Das Buch bleibt beim alten, kleineren Stop -- keine stille zweite Zeile, keine
+    # Stornierung des einzigen Schutzes, den die Position hat.
+    buecher = list(
+        await session.scalars(
+            select(StopOrderBuch)
+            .where(StopOrderBuch.anlass_proposal_id == proposal.id)
+            .order_by(StopOrderBuch.id)
+        )
+    )
+    assert len(buecher) == 1
+    assert buecher[0].zustand == "offen"
+    assert buecher[0].menge_soll == D("0.3")
 
 
 # --- HED-109: Fill-Buchung Position/Cash (Entwurf Abschnitt 4, CRO-Abnahme HED-145) -

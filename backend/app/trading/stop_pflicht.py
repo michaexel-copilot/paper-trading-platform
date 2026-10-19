@@ -247,8 +247,13 @@ async def _stelle_stop_sicher(
         return  # bereits ausreichend gedeckt
 
     stop_side = "sell" if proposal.direction == "long" else "buy"
+    # Nachführung (bestehender ist nicht None) ist eine eigene Gattung, keine
+    # Erstplatzierung (Entwurf 9.3, GESPERRT_DURCH_KENNZEICHEN HED-192): nur
+    # "stop_nachfuehrung" hält ein gesetztes Sperrkennzeichen an, "stop_platzierung"
+    # läuft laut Sperrwirkungstabelle immer durch.
+    gattung = "stop_nachfuehrung" if bestehender is not None else "stop_platzierung"
     order = VersandOrder(
-        gattung="stop_platzierung",
+        gattung=gattung,
         strategie_schluessel=str(proposal.strategy_id),
         exchange=exchange,
         symbol=symbol,
