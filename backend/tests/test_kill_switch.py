@@ -249,6 +249,7 @@ def test_b12_ausloeser_ist_in_app_models_kill_switch_ausloeser(ausloeser):
 
 @pytest.mark.parametrize("ausloeser", _B12_AUSLOESER)
 def test_b12_ausloeser_hat_strukturell_keine_aufheben_variante(ausloeser):
-    from app.kill_switch import AUFHEBEN_AUSLOESER
+    from app.kill_switch import FIRMENWEIT_AUFHEBEN_AUSLOESER, STRATEGIE_AUFHEBEN_AUSLOESER
 
-    assert ausloeser not in AUFHEBEN_AUSLOESER
+    assert ausloeser not in FIRMENWEIT_AUFHEBEN_AUSLOESER
+    assert ausloeser not in STRATEGIE_AUFHEBEN_AUSLOESER
