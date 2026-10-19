@@ -44,7 +44,13 @@ ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     STATE_WARTET_AUF_BOARD: frozenset(
         {STATE_VERFALLEN, STATE_BOARD_VERWORFEN, STATE_BOARD_GEAENDERT, STATE_BOARD_FREIGEGEBEN}
     ),
-    STATE_BOARD_FREIGEGEBEN: frozenset({STATE_STUFE2_LAEUFT}),
+    # Z7 erlaubt zusätzlich den direkten Übergang nach Z9 (Pfad 18, Entwurf 9.6,
+    # CRO-Entscheidung HED-191 Abschnitt 3a): das Sperrkennzeichen (Schritt 3-5 in
+    # Versandengpass._pruefe) greift vor dem Freigabe-Nachweis (Schritt 6, der Z7->Z8
+    # auslöst) -- ohne diesen Übergang bliebe ein während aktiver Sperre wiederholt
+    # abgelehnter Vorschlag für immer in Z7 liegen, statt wie Z0->Z2 einen eigenen,
+    # erkennbaren Endzustand zu bekommen.
+    STATE_BOARD_FREIGEGEBEN: frozenset({STATE_STUFE2_LAEUFT, STATE_STUFE2_ABGELEHNT}),
     STATE_STUFE2_LAEUFT: frozenset({STATE_STUFE2_ABGELEHNT, STATE_VERSANDT}),
     STATE_VERSANDT: frozenset(
         {STATE_GEFUELLT, STATE_TEILGEFUELLT_BEENDET, STATE_VON_GEGENSTELLE_ABGELEHNT}

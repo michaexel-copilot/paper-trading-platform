@@ -90,14 +90,24 @@ async def _pruefe_schluesseltrennung_laufend(session_factory, interval_seconds: 
 
 
 async def _versand_treiber_loop(
-    session_factory, engpass: Versandengpass, interval_seconds: int
+    session_factory,
+    engpass: Versandengpass,
+    interval_seconds: int,
+    market_service: MarketService,
+    tranche: str,
 ) -> None:
     """B-12 (HED-84, Entwurf Abschnitt 5.1): treibt board-freigegebene Vorschläge Z7
     -> Z10. ``treibe_einmal`` fängt Fehler je Vorschlag bereits selbst ab; dieses
-    try/except ist nur gegen einen unerwarteten Fehler im Durchlauf selbst."""
+    try/except ist nur gegen einen unerwarteten Fehler im Durchlauf selbst.
+
+    ``market_service``/``tranche`` (Pfad 18, HED-191): nur für den dokumentarischen
+    Limitauslastung-Snapshot bei einer Sperren-Ablehnung gebraucht, siehe
+    ``versand_treiber.berechne_limitauslastung_snapshot``."""
     while True:
         try:
-            await versand_treiber.treibe_einmal(session_factory, engpass)
+            await versand_treiber.treibe_einmal(
+                session_factory, engpass, market=market_service, tranche=tranche
+            )
         except Exception:
             log.exception("Versand-Treiber fehlgeschlagen")
         await asyncio.sleep(interval_seconds)
@@ -264,7 +274,11 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
             background.append(
                 asyncio.create_task(
                     _versand_treiber_loop(
-                        session_factory, engpass, settings.versand_treiber_intervall_sekunden
+                        session_factory,
+                        engpass,
+                        settings.versand_treiber_intervall_sekunden,
+                        service,
+                        settings.freigegebene_tranche,
                     )
                 )
             )
