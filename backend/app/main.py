@@ -79,7 +79,7 @@ async def _expire_overdue_proposals_loop(session_factory) -> None:
 async def _pruefe_schluesseltrennung_laufend(
     session_factory,
     interval_seconds: int,
-    engpass: Versandengpass,
+    engpass: Versandengpass | None,
     market_service: MarketService,
     tranche: str,
 ) -> None:
@@ -249,12 +249,15 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
         service = market_service or build_market(settings)
         service.recorder = make_price_recorder(session_factory)
         matcher = Matcher(session_factory, service)
-        # Pure Konstruktion (keine Netz-/DB-Berührung) -- unabhängig von
-        # ``run_matcher`` gebaut, damit auch die Schlüsseltrennungs-Schleife unten den
-        # Storno-Sweep ruhender Einstiegsorders auslösen kann (Pfad 2, HED-191
-        # Abschnitt 1b). Das eigentliche Senden bleibt weiterhin ausschließlich an
-        # ``run_matcher`` gebunden (Festlegung F-3, siehe unten).
-        engpass = baue_versandengpass(service, tranche=settings.freigegebene_tranche)
+        # Ein sendefähiger Engpass existiert ausschließlich im ``run_matcher``-Prozess
+        # (Festlegung F-3: kein zweiter Prozess derselben Installation darf denselben
+        # Vorschlag parallel versenden). Die Schlüsseltrennungs-Schleife unten bekommt in
+        # jedem anderen Prozess ``engpass=None`` -- ``sweep_ruhende_einstiegsorders``
+        # (Pfad 2, HED-191 Abschnitt 1b) fährt dann nur den rein internen Z8-Teil, ohne
+        # jeden Sendeversuch an der Gegenstelle (CRO-Befund HED-197).
+        engpass: Versandengpass | None = None
+        if settings.run_matcher:
+            engpass = baue_versandengpass(service, tranche=settings.freigegebene_tranche)
 
         app.state.engine = engine
         app.state.session_factory = session_factory
