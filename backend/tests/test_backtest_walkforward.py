@@ -327,6 +327,65 @@ def test_final_holdout_is_not_rolled_even_if_it_would_fit_more_than_one_window()
     assert result.test_end == holdout_frame.index[-1]
 
 
+# --- HED-180: FractionalBacktest statt Backtest, sonst stille Order-Verwerfung -----
+
+
+def _zigzag_ohlcv_at_price(n: int, *, base: float, amplitude: float) -> pd.DataFrame:
+    """Wie ``_zigzag_ohlcv``, aber mit frei wählbarem Preisniveau -- um ein Preisniveau
+    deutlich über dem Standard-Testkapital (10 000 USD) zu erzeugen, wie bei echten
+    BTC/ETH-Kursen (HED-178, HED-174 Abschnitt 9)."""
+    prices = [base + (amplitude if i % 2 == 0 else -amplitude) for i in range(n)]
+    index = pd.date_range("2024-01-01", periods=n, freq="D")
+    return pd.DataFrame(
+        {
+            "Open": prices,
+            "High": [p + amplitude / 5 for p in prices],
+            "Low": [p - amplitude / 5 for p in prices],
+            "Close": prices,
+            "Volume": [1.0] * n,
+        },
+        index=index,
+    )
+
+
+def test_run_walk_forward_does_not_silently_drop_trades_at_a_high_single_unit_price():
+    """HED-180 (Nachforderung CRO zu HED-121/HED-178): ``backtesting.Backtest`` stückelt
+    ganzzahlig und verwirft Kauforders bei einem Einzelpreis deutlich über dem
+    Testkapital lautlos als "insufficient margin" (keine Exception, nur eine Warnung).
+    Bei einem Preis von 80 000 (realistisch für BTC) gegen das Standard-Testkapital von
+    10 000 USD hätte das unkorrigierte ``Backtest`` hier 0 Trades gezählt (gemessen oben
+    per Handprobe) -- ``run_walk_forward`` muss stattdessen dieselbe Trade-Zahl wie bei
+    einem unauffälligen, niedrigen Preisniveau liefern."""
+    spec = WindowSpec(n_windows=4, train_bars=10, test_bars=5)
+    model = cost_model_for("BTC/USDC")
+
+    low_price_frame = _zigzag_ohlcv_at_price(30, base=100.0, amplitude=5.0)
+    high_price_frame = _zigzag_ohlcv_at_price(30, base=80_000.0, amplitude=4_000.0)
+
+    low_price_result = run_walk_forward(low_price_frame, _DailyFlip, model, spec)
+    high_price_result = run_walk_forward(high_price_frame, _DailyFlip, model, spec)
+
+    assert low_price_result.total_trades > 0
+    assert high_price_result.total_trades == low_price_result.total_trades
+    for w in high_price_result.windows:
+        assert w.trade_count > 0
+
+
+def test_run_final_holdout_does_not_silently_drop_trades_at_a_high_single_unit_price():
+    """Dieselbe Regression wie oben, für ``run_final_holdout`` (eigener Aufrufpunkt,
+    eigene ``Backtest``/``FractionalBacktest``-Instanz)."""
+    model = cost_model_for("BTC/USDC")
+
+    low_price_frame = _zigzag_ohlcv_at_price(10, base=100.0, amplitude=5.0)
+    high_price_frame = _zigzag_ohlcv_at_price(10, base=80_000.0, amplitude=4_000.0)
+
+    low_price_result = run_final_holdout(low_price_frame, _DailyFlip, model)
+    high_price_result = run_final_holdout(high_price_frame, _DailyFlip, model)
+
+    assert low_price_result.trade_count > 0
+    assert high_price_result.trade_count == low_price_result.trade_count
+
+
 def test_proxy_windows_and_real_final_holdout_compose_the_board_methodology():
     """Demonstriert die vom Board verlangte Zusammensetzung (HED-125, Hybrid): mehrere
     rollierende Fenster auf einer (hier synthetischen) Proxy-Reihe, gefolgt von einem
