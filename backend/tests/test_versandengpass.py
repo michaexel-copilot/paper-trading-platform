@@ -139,6 +139,57 @@ async def test_stop_platzierung_laeuft_trotz_strategie_sperre(mit_schluessel, se
     assert ergebnis.ablehnungsgrund != "unterdrueckt_durch_sperre"
 
 
+async def test_stop_nachfuehrung_firmenweit_gesperrt(mit_schluessel, session):
+    """B-15 Testpfad 6 (Nachführungshälfte, Entwurf 9.3 Sperrwirkungstabelle):
+    ``stop_nachfuehrung`` steht -- anders als ``stop_platzierung`` -- in
+    ``GESPERRT_DURCH_KENNZEICHEN`` und muss bei gesetztem firmenweitem Kennzeichen
+    abgelehnt werden. Testet die Sperrwirkung der Gattung selbst auf Engpass-Ebene;
+    dass im heutigen Code kein Aufrufer diese Gattung tatsächlich erzeugt (echte
+    Nachführungen laufen unter ``stop_platzierung``, siehe HED-185 Entwurfs-Ergänzung,
+    Vorbemerkung), ist eine gesonderte Verdrahtungslücke, kein Testmangel dieses Pfads."""
+    await _setze_firmenweit(session, True)
+
+    ergebnis = await Versandengpass().send(session, _order(gattung="stop_nachfuehrung"))
+    assert ergebnis.angenommen is False
+    assert ergebnis.ablehnungsgrund == "unterdrueckt_durch_sperre"
+
+
+async def test_stop_nachfuehrung_strategie_gesperrt(mit_schluessel, session):
+    """Testpfad 6, Strategie-Kennzeichen-Variante zur vorherigen Firmenweit-Variante."""
+    session.add(StrategieSperrkennzeichen(strategie_schluessel="s1", gesetzt=True))
+    await session.commit()
+
+    ergebnis = await Versandengpass().send(session, _order(gattung="stop_nachfuehrung"))
+    assert ergebnis.angenommen is False
+    assert ergebnis.ablehnungsgrund == "unterdrueckt_durch_sperre"
+
+
+async def test_not_liquidation_laeuft_trotz_firmenweiter_sperre(mit_schluessel, session):
+    """B-15 Testpfad 8 (Entwurf 9.6, Gruppe B (iv)): Sperrwirkungstabelle 9.3 --
+    ``not_liquidation`` steht nicht in ``GESPERRT_DURCH_KENNZEICHEN``, senkt Risiko und
+    muss bei gesetztem firmenweitem Kennzeichen unverändert durchlaufen, analog zur
+    bereits getesteten Stornierung (``test_stornierung_laeuft_trotz_firmenweiter_sperre``)."""
+    await _setze_firmenweit(session, True)
+
+    ergebnis = await Versandengpass().send(session, _order(gattung="not_liquidation"))
+    # Keine Freigabe-Nachweis-Pflicht, scheitert am fail-closed Stufe-2-Standard --
+    # das zeigt, dass die Sperre selbst sie nicht erreicht (gleiche Beweisführung wie
+    # bei der Stornierung).
+    assert ergebnis.ablehnungsgrund != "unterdrueckt_durch_sperre"
+    assert ergebnis.ablehnungsgrund == "stufe2_nicht_bestanden"
+
+
+async def test_not_liquidation_laeuft_trotz_strategie_sperre(mit_schluessel, session):
+    """Testpfad 8, Strategie-Kennzeichen-Variante: dieselbe Sperrwirkung gilt für das
+    Strategie-Kennzeichen wie fürs firmenweite (analog
+    ``test_stop_platzierung_laeuft_trotz_strategie_sperre``)."""
+    session.add(StrategieSperrkennzeichen(strategie_schluessel="s1", gesetzt=True))
+    await session.commit()
+
+    ergebnis = await Versandengpass().send(session, _order(gattung="not_liquidation"))
+    assert ergebnis.ablehnungsgrund != "unterdrueckt_durch_sperre"
+
+
 async def test_alle_pruefungen_bestanden_sendet_an_okx_demo_in_papier_betriebsart(
     mit_schluessel, session, monkeypatch
 ):
