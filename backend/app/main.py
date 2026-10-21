@@ -24,7 +24,13 @@ from app.notify import notify_new_proposal
 from app.schluessel import pruefe_schluesseltrennung_beim_start
 from app.schluesseltrennung_laufend import pruefe_einmal as pruefe_schluesseltrennung_einmal
 from app.startgatter import pruefe_installation_marker, pruefe_matcher_fuer_live_artefakt
-from app.trading import exit_fill_erkennung, stop_orderbuch_abgleich, stop_pflicht, versand_treiber
+from app.trading import (
+    buch_sicherung,
+    exit_fill_erkennung,
+    stop_orderbuch_abgleich,
+    stop_pflicht,
+    versand_treiber,
+)
 from app.trading.fristwaechter import pruefe_stufe1_fristen, pruefe_stufe2_fristen
 from app.trading.matcher import Matcher, ProcessLock
 from app.trading.proposals import FRISTWAECHTER_INTERVAL_SECONDS, verfalle_ueberfaellige_vorschlaege
@@ -207,6 +213,21 @@ async def _stop_orderbuch_abgleich_loop(
         await asyncio.sleep(interval_seconds)
 
 
+async def _buch_sicherung_loop(session_factory, settings: Settings, interval_seconds: int) -> None:
+    """B-16 (HED-85, Plan Revision 4 Abschnitt 4): tägliche externe Sicherung, danach
+    Rotation. ``sichere_einmal``/``rotiere_einmal`` fangen ihre Fehler bereits selbst
+    ab (Protokollzeile plus Mail bzw. Log); dieses try/except ist nur gegen einen
+    unerwarteten Fehler im Durchlauf selbst. Rotation läuft nur nach einer
+    erfolgreichen Sicherung (siehe Moduldokumentation von ``app.trading.buch_sicherung``)."""
+    while True:
+        try:
+            if await buch_sicherung.sichere_einmal(session_factory, settings):
+                await buch_sicherung.rotiere_einmal(settings)
+        except Exception:
+            log.exception("Buch-Sicherung fehlgeschlagen")
+        await asyncio.sleep(interval_seconds)
+
+
 async def _notify_new_proposals(session_factory, settings: Settings) -> None:
     """Board-Benachrichtigung je Vorschlag, der neu in Z3 steht (HED-43, Entwurf 5.3).
 
@@ -296,6 +317,14 @@ def create_app(settings: Settings | None = None, market_service: MarketService |
                 asyncio.create_task(
                     _fristwaechter_loop(
                         session_factory, service, settings.fristwaechter_intervall_sekunden
+                    )
+                )
+            )
+        if settings.buch_sicherung_aktiv:
+            background.append(
+                asyncio.create_task(
+                    _buch_sicherung_loop(
+                        session_factory, settings, settings.buch_sicherung_intervall_sekunden
                     )
                 )
             )

@@ -111,6 +111,26 @@ class Settings(BaseSettings):
     fristwaechter_pruefen: bool = True
     fristwaechter_intervall_sekunden: int = 300
 
+    # B-16 (HED-85, Plan Revision 6 Abschnitt 3/4): tägliche externe Sicherung des
+    # Handelsbuchs (SQLite-Snapshot) nach OneDrive, verschlüsselt über rclone crypt
+    # VOR dem Verlassen des Hosts. ``onedrive_rclone_remote`` ist der Crypt-Remote aus
+    # der rclone-Konfiguration des Hosts (vom Board eingerichtet) -- dieser Prozess
+    # liest nie ein Token oder Passwort selbst, rclone löst das aus seiner eigenen
+    # Konfigurationsdatei. Default AUS: wie bei allen anderen Jobs in diesem Prozess
+    # (vgl. ``enforce_startgatter``) hat diese Plattform auch Deployments ohne jeden
+    # Bezug zu Hedgeclip, die kein rclone konfiguriert haben.
+    buch_sicherung_aktiv: bool = False
+    buch_sicherung_intervall_sekunden: int = 24 * 3600
+    onedrive_rclone_remote: str = "onedrive-crypt"
+    # Unterordner je Betriebsart unter dem Remote, siehe Plan Abschnitt 3 ("je
+    # Installation ein eigener Unterordner... keine Installation kennt den Pfad der
+    # anderen"). ``{betriebsart}`` und ``{hostname}`` werden ersetzt.
+    buch_sicherung_pfad_praefix: str = "{betriebsart}/{hostname}"
+    # Löschschutz (Plan Abschnitt 4a, Board-Auflage Kommentar 8bf1d2ac): Rotation
+    # löscht ausschließlich Dateien älter als dieser Wert, nie per Abgleich.
+    buch_sicherung_rotation_tage: int = 30
+    rclone_binary: str = "rclone"
+
     def board_notify_email_list(self) -> list[str]:
         return [addr.strip() for addr in self.board_notify_emails.split(",") if addr.strip()]
 

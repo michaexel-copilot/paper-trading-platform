@@ -55,7 +55,10 @@ def _compose(settings: Settings, proposal: Proposal) -> EmailMessage:
     return msg
 
 
-def _send_blocking(settings: Settings, msg: EmailMessage) -> None:
+def send_blocking(settings: Settings, msg: EmailMessage) -> None:
+    """Blocking SMTP send, shared by every mail path in this app (Vorschlags-Mail hier,
+    Sicherungs-Fehlschlag in ``app.trading.buch_sicherung``) -- genau ein Codepfad, der
+    ``smtplib`` anfasst."""
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as client:
         if settings.smtp_starttls:
             client.starttls()
@@ -107,7 +110,7 @@ async def notify_new_proposal(
         for _attempt in range(2):  # Erstversuch + eine Wiederholung
             record.attempts += 1
             try:
-                await asyncio.to_thread(_send_blocking, settings, msg)
+                await asyncio.to_thread(send_blocking, settings, msg)
                 sent = True
                 break
             except Exception as exc:  # smtplib wirft diverse Exception-Typen
@@ -125,7 +128,7 @@ async def notify_new_proposal(
             if settings.cro_alert_email and not record.cro_alert_sent:
                 try:
                     await asyncio.to_thread(
-                        _send_blocking, settings, _compose_cro_alert(settings, proposal)
+                        send_blocking, settings, _compose_cro_alert(settings, proposal)
                     )
                     record.cro_alert_sent = True
                 except Exception as exc:
@@ -145,3 +148,30 @@ async def pending_notification_count(session_factory: SessionFactory) -> int:
             select(BoardNotification).where(BoardNotification.status == "failed")
         )
         return len(list(rows))
+
+
+async def notify_backup_failure(settings: Settings, fehlertext: str) -> bool:
+    """B-16 (HED-85, Plan Revision 4 Abschnitt 4): "Fehlschlag muss sichtbar werden
+    (Meldung, nicht stilles Scheitern)." Derselbe Mail-Kanal wie die Board- und
+    CRO-Benachrichtigung oben -- kein neuer Dienst. Gibt zurück, ob der Versand
+    geklappt hat; der Aufrufer trägt das Ergebnis in ``BuchSicherungLauf`` ein."""
+    msg = EmailMessage()
+    msg["Subject"] = "Tägliche Buch-Sicherung fehlgeschlagen (B-16)"
+    msg["From"] = settings.smtp_from
+    empfaenger = settings.board_notify_email_list()
+    if settings.cro_alert_email:
+        empfaenger = [*empfaenger, settings.cro_alert_email]
+    msg["To"] = ", ".join(empfaenger) or settings.smtp_from
+    msg.set_content(
+        "Die tägliche externe Sicherung des Handelsbuchs ist fehlgeschlagen.\n\n"
+        f"Fehler: {fehlertext}\n\n"
+        "Das Buch auf diesem Host ist davon nicht betroffen -- es fehlt nur die "
+        "aktuelle externe Kopie. Prüfen, sobald möglich; vor dem nächsten "
+        "Wiederanlauf-Test sicherstellen, dass die Ursache behoben ist.\n"
+    )
+    try:
+        await asyncio.to_thread(send_blocking, settings, msg)
+        return True
+    except Exception as exc:
+        log.error("Fehlschlag-Meldung für Buch-Sicherung konnte nicht gesendet werden: %s", exc)
+        return False

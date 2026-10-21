@@ -3,6 +3,7 @@ from app.models.assets import Asset, AssetSourceSymbol
 from app.models.auto_exit import AutoExitLogEntry
 from app.models.base import Base
 from app.models.board_notifications import BoardNotification
+from app.models.buch_sicherung import BuchSicherungLauf
 from app.models.dashboard_audit import ProposalActionAttempt
 from app.models.fees import FeeProfile, PortfolioFeeProfile
 from app.models.fristwaechter import FristEskalation
@@ -24,6 +25,7 @@ __all__ = [
     "AutoExitLogEntry",
     "Base",
     "BoardNotification",
+    "BuchSicherungLauf",
     "FeeProfile",
     "FirmenweitesSperrkennzeichen",
     "FristEskalation",

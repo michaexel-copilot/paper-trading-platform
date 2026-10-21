@@ -1,6 +1,6 @@
 """Board-Benachrichtigung (HED-43, Entwurf 5.3): Versand, genau eine Wiederholung bei
 Fehler, dauerhafter Ausfall löst Einzelmeldung an den CRO aus. Kein echter SMTP-Server
--- ``app.notify._send_blocking`` wird durch einen Fake ersetzt.
+-- ``app.notify.send_blocking`` wird durch einen Fake ersetzt.
 """
 
 import asyncio
@@ -89,7 +89,7 @@ async def test_successful_send_marks_sent_after_one_attempt(
     session_factory, settings, proposal_id, monkeypatch
 ):
     calls = []
-    monkeypatch.setattr(notify, "_send_blocking", lambda s, msg: calls.append(msg))
+    monkeypatch.setattr(notify, "send_blocking", lambda s, msg: calls.append(msg))
 
     await notify.notify_new_proposal(session_factory, settings, proposal_id)
 
@@ -111,7 +111,7 @@ async def test_failure_then_success_retries_once(
         if attempts["n"] == 1:
             raise OSError("connection refused")
 
-    monkeypatch.setattr(notify, "_send_blocking", flaky)
+    monkeypatch.setattr(notify, "send_blocking", flaky)
 
     await notify.notify_new_proposal(session_factory, settings, proposal_id)
 
@@ -134,7 +134,7 @@ async def test_persistent_failure_marks_failed_and_alerts_cro(
             return
         raise OSError("connection refused")
 
-    monkeypatch.setattr(notify, "_send_blocking", capture_cro)
+    monkeypatch.setattr(notify, "send_blocking", capture_cro)
 
     await notify.notify_new_proposal(session_factory, settings, proposal_id)
 
@@ -156,7 +156,7 @@ async def test_second_concurrent_call_does_not_double_send(
     BoardNotification-Zeile mit unique(proposal_id) wird zuerst angelegt, der zweite
     Versuch committet nicht und sendet nicht."""
     calls = []
-    monkeypatch.setattr(notify, "_send_blocking", lambda s, msg: calls.append(msg))
+    monkeypatch.setattr(notify, "send_blocking", lambda s, msg: calls.append(msg))
 
     await asyncio.gather(
         notify.notify_new_proposal(session_factory, settings, proposal_id),
