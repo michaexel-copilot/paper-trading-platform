@@ -111,7 +111,7 @@ class Settings(BaseSettings):
     fristwaechter_pruefen: bool = True
     fristwaechter_intervall_sekunden: int = 300
 
-    # B-16 (HED-85, Plan Revision 4 Abschnitt 3/4): tägliche externe Sicherung des
+    # B-16 (HED-85, Plan Revision 6 Abschnitt 3/4): tägliche externe Sicherung des
     # Handelsbuchs (SQLite-Snapshot) nach OneDrive, verschlüsselt über rclone crypt
     # VOR dem Verlassen des Hosts. ``onedrive_rclone_remote`` ist der Crypt-Remote aus
     # der rclone-Konfiguration des Hosts (vom Board eingerichtet) -- dieser Prozess

@@ -1,4 +1,4 @@
-"""Tägliche externe Sicherung des Handelsbuchs (B-16, HED-85, Plan Revision 4
+"""Tägliche externe Sicherung des Handelsbuchs (B-16, HED-85, Plan Revision 6
 Abschnitt 2-4).
 
 Positionen, Orders und das Freigabe-Protokoll liegen alle in derselben SQLite-Datei

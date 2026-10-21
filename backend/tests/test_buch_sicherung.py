@@ -128,6 +128,42 @@ async def test_rclone_copy_fehlschlag_wird_gemeldet(session_factory, settings, m
     assert "rclone copy" in lauf.fehlertext
 
 
+async def test_abgelaufenes_refresh_token_wird_gemeldet_nicht_stumm(
+    session_factory, settings, monkeypatch
+):
+    """Auflage 2 aus Board-Bescheid 21.10.2026 (HED-85, Kommentar f40c53f3): Verhalten bei
+    abgelaufenem Refresh-Token muss "Fehler melden, kein stilles Scheitern" sein. rclone
+    meldet das mit einem OAuth-Fehler und einem Exit-Code != 0 -- geht über denselben
+    generischen Fehlerpfad wie jeder andere rclone-Fehlschlag (siehe
+    ``test_rclone_copy_fehlschlag_wird_gemeldet``), hier mit dem konkreten Fehlerbild."""
+    gesendete_mails = []
+    monkeypatch.setattr(notify, "send_blocking", lambda s, msg: gesendete_mails.append(msg))
+    oauth_fehler = (
+        "oauth2: cannot fetch token: 400 Bad Request\n"
+        'Response: {"error":"invalid_grant","error_description":"AADSTS700082: '
+        'The refresh token has expired due to inactivity."}'
+    )
+
+    def fake(cmd: list[str]) -> subprocess.CompletedProcess:
+        if cmd[0] == "sqlite3":
+            ziel = cmd[2].split(" ", 1)[1]
+            Path(ziel).write_bytes(b"fake-snapshot")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=oauth_fehler)
+
+    monkeypatch.setattr(buch_sicherung, "_run", fake)
+
+    ok = await buch_sicherung.sichere_einmal(session_factory, settings)
+
+    assert ok is False
+    lauf = await _einziger_lauf(session_factory)
+    assert lauf.ergebnis == "fehlgeschlagen"
+    assert "invalid_grant" in lauf.fehlertext
+    assert lauf.cro_alert_gesendet is True
+    assert len(gesendete_mails) == 1
+    assert "B-16" in gesendete_mails[0]["Subject"]
+
+
 async def test_rotation_nutzt_ausschliesslich_delete_mit_min_age_nie_sync(settings, monkeypatch):
     calls: list[list[str]] = []
 
